@@ -1,4 +1,10 @@
+use std::fs;
 use clap::Parser;
+use uuid::Uuid;
+use duckdb::Connection;
+use crate::entur_siriformat::SiriETResponse;
+use reqwest;
+use reqwest::blocking::Client;
 
 mod entur;
 mod entur_siriformat;
@@ -26,8 +32,35 @@ struct Forsinka {
     db_url: Option<String>
 }
 
+fn fetch_initial_data(static_data: &Option<String>, api_url: &String, me: &Uuid, client: &Client) -> anyhow::Result<SiriETResponse> {
+    if let Some(path) = static_data {
+        let content = fs::read(path)?;
+        Ok(serde_json::from_slice(&content)?)
+    } else {
+        entur::fetch_siri(
+            client, api_url.as_str(), me.to_string().as_str()
+        )
+    }
+}
 
 fn main() -> anyhow::Result<()> {
-    let args = Forsinka::parse();
+    let args = Forsinka::try_parse()?;
+    let me = Uuid::new_v4();
+    let client = Client::new();
+
+    let db = match &args.db_url {
+        None => Connection::open_in_memory(),
+        Some(f) => {
+            Connection::open(f.as_str())
+        }
+    }?;
+
+    db.execute("install spatial;", [])?;
+    db.execute("load spatial;", [])?;
+
+    let data = fetch_initial_data(
+        &args.static_data, &args.api_url, &me, &client
+    )?;
+
     Ok(())
 }
