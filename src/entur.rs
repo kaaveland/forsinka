@@ -1,0 +1,1 @@
+pub const ENTUR_API_URL: &str = "https://api.entur.io/realtime/v1/rest/et";

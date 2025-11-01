@@ -1,0 +1,6 @@
+[tools]
+rust = "1.90.0"
+
+[tasks.fetch-example]
+description = "Place an example data file in the data/ directory"
+run = "mkdir -p data && curl -H 'accept: application/json' https://api.entur.io/realtime/v1/rest/et > data/example.json"
