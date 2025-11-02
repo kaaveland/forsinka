@@ -1,4 +1,4 @@
-use crate::entur_data::{append_data, vehicle_journeys, Config};
+use crate::entur_data::{vehicle_journeys, Config};
 use axum::error_handling::HandleErrorLayer;
 use axum::http::StatusCode;
 use axum::routing::get;
@@ -14,6 +14,7 @@ use tower::timeout::TimeoutLayer;
 use tower::{BoxError, ServiceBuilder};
 use tracing::{error, info};
 use tracing_subscriber::fmt;
+use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
@@ -142,7 +143,11 @@ async fn refetch_data(db: &mut Connection, entur_config: &Config) -> anyhow::Res
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
-        .with(fmt::layer().with_writer(std::io::stderr))
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_span_events(FmtSpan::CLOSE),
+        )
         .with(EnvFilter::try_from_env("RUST_LOG").unwrap_or_else(|_| EnvFilter::new("info")))
         .init();
 
@@ -180,9 +185,15 @@ async fn main() -> anyhow::Result<()> {
                     let mut interval =
                         tokio::time::interval(Duration::from_secs(interval_seconds as u64));
 
+                    let mut first = true;
+
                     loop {
                         tokio::select! {
                             _ = interval.tick() => {
+                                if first {
+                                    first = false;
+                                    continue;
+                                }
                                 if let Err(reason) = refetch_data(&mut _db, &entur_config).await {
                                     error!("Unable to refetch: {reason:?}");
                                 }

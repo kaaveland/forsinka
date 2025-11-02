@@ -55,7 +55,7 @@ create or replace table vehicle_journey(
     direction_ref varchar,
     -- keys in stops.id _or_ quays.id to fetch name
     destination_ref varchar,
-    origin_ref varchar
+    origin_ref varchar,
 );
 
 -- arrivals that already happened, key is vehicle_journey_id + data_source + order + recorded_at_time
@@ -82,7 +82,7 @@ create or replace table recorded_call(
     -- this particular stop has been cancelled for the journey
     cancellation bool,
     -- connects to _either_ quays.id or stops.id, where we should fetch name and coordinates
-    stop_point_ref varchar not null
+    stop_point_ref varchar not null,
 );
 
 -- arrivals yet to take place, key is vehicle_journey_id + data_source + order + recorded_at_time

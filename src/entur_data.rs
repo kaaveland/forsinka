@@ -1,9 +1,9 @@
 use crate::entur_siriformat::{EstimatedVehicleJourney, SiriETResponse};
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
-use duckdb::{Appender, Connection, Row};
+use duckdb::{Appender, Row};
 use reqwest::Client;
 use std::fs;
-use tracing::{event, info, span, Level};
+use tracing::{event, info, instrument, span, Level};
 
 pub const ENTUR_API_URL: &str = "https://api.entur.io/realtime/v1/rest/et";
 
@@ -30,6 +30,7 @@ impl Config {
     }
 }
 
+#[instrument(name = "fetch_siri", skip(config))]
 async fn fetch_siri(config: &Config) -> anyhow::Result<SiriETResponse> {
     let url = config.api_url.as_str();
     let requestor_id = config.requestor_id.as_str();
