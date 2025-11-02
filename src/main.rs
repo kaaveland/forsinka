@@ -1,4 +1,4 @@
-use crate::entur_data::append_data;
+use crate::entur_data::{append_data, vehicle_journeys, Config};
 use axum::error_handling::HandleErrorLayer;
 use axum::http::StatusCode;
 use axum::routing::get;
@@ -6,7 +6,7 @@ use axum::Router;
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
 use reqwest;
-use reqwest::{Client, ClientBuilder};
+use reqwest::ClientBuilder;
 use std::time::Duration;
 use tokio::signal;
 use tokio::sync::watch::Sender;
@@ -76,7 +76,7 @@ struct Forsinka {
     command: Commands,
 }
 
-async fn initial_import(args: &SharedOptions) -> anyhow::Result<(Connection, Client)> {
+async fn initial_import(args: SharedOptions) -> anyhow::Result<(Connection, Config)> {
     let me = args
         .requestor_id
         .clone()
@@ -87,16 +87,15 @@ async fn initial_import(args: &SharedOptions) -> anyhow::Result<(Connection, Cli
         .timeout(Duration::from_millis(10_000))
         .build()?;
 
-    let db = db::prepare_db(&args.db_url, &args.parquet_root)?;
+    let mut db = db::prepare_db(&args.db_url, &args.parquet_root)?;
+    let config = Config::new(me, args.api_url.clone(), client, args.static_data);
 
-    let data =
-        entur_data::fetch_initial_data(&args.static_data, &args.api_url, me.as_str(), &client)
-            .await?;
+    let data = entur_data::fetch_data(&config).await?;
     let vehicle_journeys = entur_data::vehicle_journeys(data);
     info!("Start inserting journeys");
-    append_data(vehicle_journeys, &db)?;
-    info!("Load initial SIRI-et data into DuckDB");
-    Ok((db, client))
+    db::replace_data(&mut db, vehicle_journeys)?;
+    info!("Loaded initial data");
+    Ok((db, config))
 }
 
 async fn root() -> &'static str {
@@ -133,6 +132,13 @@ async fn shutdown_signal(terminate_jobs: Sender<bool>) {
     }
 }
 
+async fn refetch_data(db: &mut Connection, entur_config: &Config) -> anyhow::Result<()> {
+    let data = entur_data::fetch_data(entur_config).await?;
+    let journeys = vehicle_journeys(data);
+    db::replace_data(db, journeys)?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -144,7 +150,7 @@ async fn main() -> anyhow::Result<()> {
 
     match args.command {
         Commands::Import { shared_options } => {
-            initial_import(&shared_options).await?;
+            initial_import(shared_options).await?;
             Ok(())
         }
         Commands::Serve {
@@ -152,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
             port,
             fetch_interval_seconds,
         } => {
-            let (_db, _client) = initial_import(&shared_options).await?;
+            let (mut _db, entur_config) = initial_import(shared_options).await?;
 
             let app = Router::new().route("/", get(root)).layer(
                 ServiceBuilder::new()
@@ -177,7 +183,10 @@ async fn main() -> anyhow::Result<()> {
                     loop {
                         tokio::select! {
                             _ = interval.tick() => {
-                                info!("Refetch")
+                                if let Err(reason) = refetch_data(&mut _db, &entur_config).await {
+                                    error!("Unable to refetch: {reason:?}");
+                                }
+
                             }
                             _ = recv_shutdown.changed() => {
                                 if *recv_shutdown.borrow() {

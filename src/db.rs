@@ -1,3 +1,4 @@
+use crate::entur_data::{append_data, VehicleJourneyAppend};
 use duckdb::Connection;
 use tracing::info;
 
@@ -26,4 +27,20 @@ pub fn prepare_db(db_url: &Option<String>, parquet_root: &str) -> anyhow::Result
     )?;
 
     Ok(db)
+}
+
+pub fn replace_data(
+    db: &mut Connection,
+    data: impl Iterator<Item = VehicleJourneyAppend>,
+) -> anyhow::Result<()> {
+    let tx = db.transaction()?;
+    append_data(
+        data,
+        tx.appender("vehicle_journey")?,
+        tx.appender("estimated_call")?,
+        tx.appender("recorded_call")?,
+    )?;
+    // TODO: Get rid of old versions of the journeys + calls
+    tx.commit()?;
+    Ok(())
 }

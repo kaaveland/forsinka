@@ -7,13 +7,35 @@ use tracing::{event, info, span, Level};
 
 pub const ENTUR_API_URL: &str = "https://api.entur.io/realtime/v1/rest/et";
 
-async fn fetch_siri(
-    client: &Client,
-    url: &str,
-    requestor_id: &str,
-) -> anyhow::Result<SiriETResponse> {
+pub struct Config {
+    requestor_id: String,
+    api_url: String,
+    client: Client,
+    static_data: Option<String>,
+}
+
+impl Config {
+    pub fn new(
+        requestor_id: String,
+        api_url: String,
+        client: Client,
+        static_data: Option<String>,
+    ) -> Self {
+        Self {
+            requestor_id,
+            api_url,
+            client,
+            static_data,
+        }
+    }
+}
+
+async fn fetch_siri(config: &Config) -> anyhow::Result<SiriETResponse> {
+    let url = config.api_url.as_str();
+    let requestor_id = config.requestor_id.as_str();
     info!("Poll {url} with requestorId={requestor_id}");
-    Ok(client
+    Ok(config
+        .client
         .get(url)
         // TODO: We're getting the entire dataset each time for some reason?
         // Might not be a problem since we're pretty fast anyway.
@@ -25,32 +47,26 @@ async fn fetch_siri(
         .await?)
 }
 
-pub async fn fetch_initial_data(
-    static_data: &Option<String>,
-    api_url: &String,
-    me: &str,
-    client: &Client,
-) -> anyhow::Result<SiriETResponse> {
-    if let Some(path) = static_data {
+pub async fn fetch_data(config: &Config) -> anyhow::Result<SiriETResponse> {
+    if let Some(path) = &config.static_data {
         let content = fs::read(path)?;
         Ok(serde_json::from_slice(&content)?)
     } else {
-        fetch_siri(client, api_url.as_str(), me).await
+        fetch_siri(config).await
     }
 }
 
 pub fn append_data(
     data: impl Iterator<Item = VehicleJourneyAppend>,
-    connection: &Connection,
+    mut journey_appender: Appender,
+    mut estimated_calls_appender: Appender,
+    mut recorded_calls_appender: Appender,
 ) -> duckdb::Result<()> {
     let _span = span!(Level::INFO, "append_data").entered();
     let mut journeys: usize = 0;
     let mut estimated_calls = 0;
     let mut recorded_calls = 0;
 
-    let mut journey_appender = connection.appender("vehicle_journey")?;
-    let mut estimated_calls_appender = connection.appender("estimated_call")?;
-    let mut recorded_calls_appender = connection.appender("recorded_call")?;
     for append in data {
         let VehicleJourneyAppend {
             vehicle_journey_row,
