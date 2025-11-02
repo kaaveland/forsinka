@@ -1,6 +1,8 @@
 -- The schema is completely re-installed when the app boots, regardless of whether there's data there or not.
 -- The tables are recreated, empty. Therefore the app must populate with some initial data before it's done booting.
 -- This pattern does not work well with persistent data files, so it's more suitable for the in-memory database mode.
+
+-- We'll want to use spatial to geo-filter based on distance
 install spatial;
 load spatial;
 
@@ -40,7 +42,7 @@ create or replace table stops (
 
 create or replace table vehicle_journey(
     -- probably block_ref/dated_vehicle_journey_ref
-    id varchar not null,
+    vehicle_journey_id varchar not null,
     -- ATB, RUT, ...
     data_source varchar not null,
     -- last imported time - we can have multiple imports, and should only show one!

@@ -5,19 +5,19 @@
 #![allow(dead_code)]
 
 use chrono::{DateTime, FixedOffset, NaiveDate};
-use serde::{Deserialize};
+use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct SiriETResponse {
-    pub siri: Siri
+    pub siri: Siri,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct Siri {
     #[serde(rename = "ServiceDelivery")]
     pub service_delivery: ServiceDelivery,
-    pub version: String
+    pub version: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -25,7 +25,7 @@ pub struct Siri {
 pub struct ServiceDelivery {
     pub estimated_timetable_delivery: Vec<EstimatedTimetableDelivery>,
     pub producer_ref: StringValue,
-    pub response_timestamp: DateTime<FixedOffset>
+    pub response_timestamp: DateTime<FixedOffset>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -34,14 +34,14 @@ pub struct EstimatedTimetableDelivery {
     #[serde(rename = "ResponseTimestamp")]
     pub response_timestamp: DateTime<FixedOffset>,
     #[serde(rename = "EstimatedJourneyVersionFrame")]
-    pub estimated_journey_version_frame: Vec<EstimatedJourneyVersionFrame>
+    pub estimated_journey_version_frame: Vec<EstimatedJourneyVersionFrame>,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct EstimatedJourneyVersionFrame {
     pub estimated_vehicle_journey: Vec<EstimatedVehicleJourney>,
-    pub recorded_at_time: DateTime<FixedOffset>
+    pub recorded_at_time: DateTime<FixedOffset>,
 }
 
 /// A journey, identified by a selection of some fields. Future stops are in `estimated_calls` and past stops are in `recorded_calls`.
@@ -89,42 +89,42 @@ pub struct EstimatedVehicleJourney {
     pub service_feature_ref: Option<Vec<StringValue>>,
     pub vehicle_mode: Option<Vec<String>>,
     pub vehicle_ref: Option<StringValue>,
-    pub via: Option<Vec<Via>>
+    pub via: Option<Vec<Via>>,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct Via {
-    pub place_name: Vec<StringValue>
+    pub place_name: Vec<StringValue>,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct LocalizedString {
     pub lang: Option<String>,
-    pub value: String
+    pub value: String,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct OptionalStringValue {
-    pub value: Option<String>
+    pub value: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct FramedVehicleJourneyRef {
     pub data_frame_ref: DataFrameRef,
-    pub dated_vehicle_journey_ref: String
+    pub dated_vehicle_journey_ref: String,
 }
 
 #[derive(Deserialize, Debug)]
 pub struct DataFrameRef {
-    pub value: NaiveDate
+    pub value: NaiveDate,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct RecordedCalls {
-    pub recorded_call: Vec<RecordedCall>
+    pub recorded_call: Vec<RecordedCall>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -145,13 +145,13 @@ pub struct RecordedCall {
     pub stop_point_name: Option<Vec<StringValue>>,
     pub stop_point_ref: StringValue,
     pub visit_number: Option<u16>,
-    pub via: Option<Vec<Via>>
+    pub via: Option<Vec<Via>>,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct EstimatedCalls {
-    pub estimated_call: Vec<EstimatedCall>
+    pub estimated_call: Vec<EstimatedCall>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -184,7 +184,7 @@ pub struct EstimatedCall {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
 pub struct PredictionQuality {
-    pub prediction_level: String
+    pub prediction_level: String,
 }
 
 #[derive(Deserialize, Debug)]
@@ -195,8 +195,7 @@ pub struct StopAssignment {
     pub expected_quay_ref: StringValue,
 }
 
-
 #[derive(Deserialize, Debug)]
 pub struct StringValue {
-    pub value: String
+    pub value: String,
 }
