@@ -1,9 +1,17 @@
 use crate::entur_data::append_data;
+use axum::error_handling::HandleErrorLayer;
+use axum::http::StatusCode;
+use axum::routing::get;
+use axum::Router;
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
 use reqwest;
 use reqwest::Client;
-use tracing::info;
+use std::time::Duration;
+use tokio::signal;
+use tower::timeout::TimeoutLayer;
+use tower::{BoxError, ServiceBuilder};
+use tracing::{error, info};
 use tracing_subscriber::fmt;
 use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
@@ -86,6 +94,38 @@ async fn initial_import(args: &SharedOptions) -> anyhow::Result<Connection> {
     Ok(db)
 }
 
+async fn root() -> &'static str {
+    "Hello, World"
+}
+
+async fn shutdown_signal() {
+    let interrupt = async {
+        signal::ctrl_c()
+            .await
+            .expect("Unable to set signal handler for Ctrl+C");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = interrupt => {
+            info!("Received Ctrl+C signal");
+        },
+        _ = terminate => {
+            info!("Received terminate signal");
+        },
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -106,6 +146,25 @@ async fn main() -> anyhow::Result<()> {
             fetch_interval_seconds,
         } => {
             let _db = initial_import(&shared_options).await?;
+            let _copy = _db.try_clone()?;
+
+            let app = Router::new().route("/", get(root)).layer(
+                ServiceBuilder::new()
+                    .layer(HandleErrorLayer::new(|_: BoxError| async {
+                        error!("Timed out");
+                        (StatusCode::REQUEST_TIMEOUT, "Timed out. Sorry!".to_string())
+                    }))
+                    .layer(TimeoutLayer::new(Duration::from_millis(500))),
+            );
+
+            let addr = format!("0.0.0.0:{}", port);
+
+            let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
+            axum::serve(listener, app)
+                .with_graceful_shutdown(shutdown_signal())
+                .await?;
+
+            info!("Terminating");
             Ok(())
         }
     }
