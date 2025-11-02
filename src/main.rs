@@ -6,9 +6,10 @@ use axum::Router;
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
 use reqwest;
-use reqwest::Client;
+use reqwest::{Client, ClientBuilder};
 use std::time::Duration;
 use tokio::signal;
+use tokio::sync::watch::Sender;
 use tower::timeout::TimeoutLayer;
 use tower::{BoxError, ServiceBuilder};
 use tracing::{error, info};
@@ -75,13 +76,17 @@ struct Forsinka {
     command: Commands,
 }
 
-async fn initial_import(args: &SharedOptions) -> anyhow::Result<Connection> {
+async fn initial_import(args: &SharedOptions) -> anyhow::Result<(Connection, Client)> {
     let me = args
         .requestor_id
         .clone()
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-    let client = Client::new();
+    let client = ClientBuilder::default()
+        .connect_timeout(Duration::from_millis(1_000))
+        .timeout(Duration::from_millis(10_000))
+        .build()?;
+
     let db = db::prepare_db(&args.db_url, &args.parquet_root)?;
 
     let data =
@@ -91,14 +96,14 @@ async fn initial_import(args: &SharedOptions) -> anyhow::Result<Connection> {
     info!("Start inserting journeys");
     append_data(vehicle_journeys, &db)?;
     info!("Load initial SIRI-et data into DuckDB");
-    Ok(db)
+    Ok((db, client))
 }
 
 async fn root() -> &'static str {
     "Hello, World"
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(terminate_jobs: Sender<bool>) {
     let interrupt = async {
         signal::ctrl_c()
             .await
@@ -119,9 +124,11 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = interrupt => {
             info!("Received Ctrl+C signal");
+            terminate_jobs.send(true).expect("Unable to terminate jobs");
         },
         _ = terminate => {
             info!("Received terminate signal");
+            terminate_jobs.send(true).expect("Unable to terminate jobs");
         },
     }
 }
@@ -137,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
 
     match args.command {
         Commands::Import { shared_options } => {
-            let _db = initial_import(&shared_options).await?;
+            initial_import(&shared_options).await?;
             Ok(())
         }
         Commands::Serve {
@@ -145,8 +152,7 @@ async fn main() -> anyhow::Result<()> {
             port,
             fetch_interval_seconds,
         } => {
-            let _db = initial_import(&shared_options).await?;
-            let _copy = _db.try_clone()?;
+            let (_db, _client) = initial_import(&shared_options).await?;
 
             let app = Router::new().route("/", get(root)).layer(
                 ServiceBuilder::new()
@@ -160,9 +166,39 @@ async fn main() -> anyhow::Result<()> {
             let addr = format!("0.0.0.0:{}", port);
 
             let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
+            let (send_shutdown, recv_shutdown) = tokio::sync::watch::channel(false);
+
+            let maybe_task = if let Some(interval_seconds) = fetch_interval_seconds {
+                let mut recv_shutdown = recv_shutdown.clone();
+                Some(tokio::spawn(async move {
+                    let mut interval =
+                        tokio::time::interval(Duration::from_secs(interval_seconds as u64));
+
+                    loop {
+                        tokio::select! {
+                            _ = interval.tick() => {
+                                info!("Refetch")
+                            }
+                            _ = recv_shutdown.changed() => {
+                                if *recv_shutdown.borrow() {
+                                    info!("Shutdown job");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }))
+            } else {
+                None
+            };
+
             axum::serve(listener, app)
-                .with_graceful_shutdown(shutdown_signal())
+                .with_graceful_shutdown(shutdown_signal(send_shutdown))
                 .await?;
+
+            if let Some(task) = maybe_task {
+                let _ = task.await?;
+            }
 
             info!("Terminating");
             Ok(())
