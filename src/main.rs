@@ -1,14 +1,16 @@
 use crate::api::JourneyDelay;
-use crate::entur_data::{vehicle_journeys, Config};
+use crate::entur_data::{Config, vehicle_journeys};
 use anyhow::anyhow;
 use axum::error_handling::HandleErrorLayer;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{Json, Router};
+use axum::{Json, Router, http};
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
+use http::HeaderValue;
+use http::header::CACHE_CONTROL;
 use reqwest;
 use reqwest::ClientBuilder;
 use std::sync::{Arc, Mutex};
@@ -17,6 +19,9 @@ use tokio::signal;
 use tokio::sync::watch::Sender;
 use tower::timeout::TimeoutLayer;
 use tower::{BoxError, ServiceBuilder};
+use tower_http::cors;
+use tower_http::cors::CorsLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{error, info};
 use tracing_subscriber::fmt;
 use tracing_subscriber::fmt::format::FmtSpan;
@@ -230,8 +235,17 @@ async fn main() -> anyhow::Result<()> {
                             error!("Timed out");
                             (StatusCode::REQUEST_TIMEOUT, "Timed out. Sorry!".to_string())
                         }))
-                        .layer(TimeoutLayer::new(Duration::from_millis(500))),
+                        .layer(TimeoutLayer::new(Duration::from_millis(500)))
+                        .layer(
+                            CorsLayer::new()
+                                .allow_methods([http::Method::GET])
+                                .allow_origin(cors::Any),
+                        ),
                 )
+                .layer(SetResponseHeaderLayer::if_not_present(
+                    CACHE_CONTROL,
+                    HeaderValue::from_static("public, s-maxage=10, max-age=30"),
+                ))
                 .with_state(Arc::new(Mutex::new(app_db)));
 
             let addr = format!("0.0.0.0:{}", port);

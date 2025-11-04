@@ -3,7 +3,7 @@ use chrono::{DateTime, FixedOffset, TimeZone, Utc};
 use duckdb::{Appender, Row};
 use reqwest::Client;
 use std::fs;
-use tracing::{event, info, instrument, span, Level};
+use tracing::{Level, event, info, instrument, span};
 
 pub const ENTUR_API_URL: &str = "https://api.entur.io/realtime/v1/rest/et";
 

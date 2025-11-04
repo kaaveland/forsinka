@@ -1,4 +1,4 @@
-use crate::entur_data::{append_data, VehicleJourneyAppend};
+use crate::entur_data::{VehicleJourneyAppend, append_data};
 use duckdb::Connection;
 use std::time::Instant;
 use tracing::{info, instrument};
