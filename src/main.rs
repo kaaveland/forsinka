@@ -44,6 +44,12 @@ struct SharedOptions {
     /// The default behaviour is to generate a unique one startup to receive the full dataset the first run
     #[arg(long = "requestor-id")]
     requestor_id: Option<String>,
+    /// Number of threads to configure DuckDB with
+    #[arg(short = 'j', long = "threads", default_value = "1")]
+    threads: u8,
+    /// GB of RAM to grant DuckDB
+    #[arg(short = 'm', long = "memory-gbs", default_value = "1")]
+    memory_gb: u8,
 }
 
 #[derive(Subcommand)]
@@ -85,14 +91,19 @@ async fn initial_import(args: SharedOptions) -> anyhow::Result<(Connection, Conf
 
     let client = ClientBuilder::default()
         .connect_timeout(Duration::from_millis(1_000))
-        .timeout(Duration::from_millis(10_000))
+        .timeout(Duration::from_millis(60_000))
         .build()?;
 
-    let mut db = db::prepare_db(&args.db_url, &args.parquet_root)?;
+    let mut db = db::prepare_db(
+        &args.db_url,
+        &args.parquet_root,
+        args.threads,
+        args.memory_gb,
+    )?;
     let config = Config::new(me, args.api_url.clone(), client, args.static_data);
 
     let data = entur_data::fetch_data(&config).await?;
-    let vehicle_journeys = entur_data::vehicle_journeys(data);
+    let vehicle_journeys = entur_data::vehicle_journeys(data, 0);
     info!("Start inserting journeys");
     db::replace_data(&mut db, vehicle_journeys)?;
     info!("Loaded initial data");
@@ -133,9 +144,13 @@ async fn shutdown_signal(terminate_jobs: Sender<bool>) {
     }
 }
 
-async fn refetch_data(db: &mut Connection, entur_config: &Config) -> anyhow::Result<()> {
+async fn refetch_data(
+    db: &mut Connection,
+    entur_config: &Config,
+    version: u32,
+) -> anyhow::Result<()> {
     let data = entur_data::fetch_data(entur_config).await?;
-    let journeys = vehicle_journeys(data);
+    let journeys = vehicle_journeys(data, version);
     db::replace_data(db, journeys)?;
     Ok(())
 }
@@ -186,6 +201,7 @@ async fn main() -> anyhow::Result<()> {
                         tokio::time::interval(Duration::from_secs(interval_seconds as u64));
 
                     let mut first = true;
+                    let mut version = 1;
 
                     loop {
                         tokio::select! {
@@ -194,7 +210,7 @@ async fn main() -> anyhow::Result<()> {
                                     first = false;
                                     continue;
                                 }
-                                if let Err(reason) = refetch_data(&mut _db, &entur_config).await {
+                                if let Err(reason) = refetch_data(&mut _db, &entur_config, version).await {
                                     error!("Unable to refetch: {reason:?}");
                                 }
 
@@ -206,6 +222,7 @@ async fn main() -> anyhow::Result<()> {
                                 }
                             }
                         }
+                        version += 1;
                     }
                 }))
             } else {

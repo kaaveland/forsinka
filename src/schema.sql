@@ -43,6 +43,7 @@ create or replace table stops (
 create or replace table vehicle_journey(
     -- probably block_ref/dated_vehicle_journey_ref
     vehicle_journey_id varchar not null,
+    version uinteger not null,
     -- ATB, RUT, ...
     data_source varchar not null,
     -- last imported time - we can have multiple imports, and should only show one!
@@ -56,6 +57,8 @@ create or replace table vehicle_journey(
     -- keys in stops.id _or_ quays.id to fetch name
     destination_ref varchar,
     origin_ref varchar,
+    started bool,
+    finished bool
 );
 
 -- arrivals that already happened, key is vehicle_journey_id + data_source + order + recorded_at_time
@@ -64,6 +67,7 @@ create or replace table recorded_call(
     -- the first columns are for identification / connecting to vehicle journey
     -- probably block_ref/dated_vehicle_journey_ref
     vehicle_journey_id varchar not null,
+    version uinteger not null,
     -- ATB, RUT, ...
     data_source varchar not null,
     -- last imported time - we can have multiple imports, and should only show one!
@@ -91,6 +95,7 @@ create or replace table estimated_call(
     -- the first columns are for identification / connecting to vehicle journey
     -- probably block_ref/dated_vehicle_journey_ref
     vehicle_journey_id varchar not null,
+    version uinteger not null,
     -- ATB, RUT, ...
     data_source varchar not null,
     -- last imported time - we can have multiple imports, and should only show one!
