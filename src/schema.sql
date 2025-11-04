@@ -2,10 +2,6 @@
 -- The tables are recreated, empty. Therefore the app must populate with some initial data before it's done booting.
 -- This pattern does not work well with persistent data files, so it's more suitable for the in-memory database mode.
 
--- We'll want to use spatial to geo-filter based on distance
-install spatial;
-load spatial;
-
 -- https://data.entur.no/dataset/national_stop_registry see quays_last_version
 create or replace table quays (
     id varchar not null,
@@ -60,6 +56,7 @@ create or replace table vehicle_journey(
     started bool,
     finished bool
 );
+
 
 -- arrivals that already happened, key is vehicle_journey_id + data_source + order + recorded_at_time
 -- but we should only show the row with the highest recorded_at_time
