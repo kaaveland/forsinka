@@ -1,21 +1,22 @@
 use crate::api::JourneyDelay;
-use crate::entur_data::{Config, vehicle_journeys};
+use crate::entur_data::{vehicle_journeys, Config};
 use anyhow::anyhow;
 use axum::error_handling::HandleErrorLayer;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{Json, Router, http};
+use axum::{http, Json, Router};
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
-use http::HeaderValue;
 use http::header::CACHE_CONTROL;
+use http::HeaderValue;
 use reqwest::ClientBuilder;
-use std::sync::{Arc, Mutex};
+use serde::Serialize;
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 use tokio::signal;
-use tokio::sync::watch::Sender;
+use tokio::sync::watch::{Receiver, Sender};
 use tower::timeout::TimeoutLayer;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::cors;
@@ -145,11 +146,11 @@ async fn shutdown_signal(terminate_jobs: Sender<bool>) {
     tokio::select! {
         _ = interrupt => {
             info!("Received Ctrl+C signal");
-            terminate_jobs.send(true).expect("Unable to terminate jobs");
+            terminate_jobs.send(true).ok();
         },
         _ = terminate => {
             info!("Received terminate signal");
-            terminate_jobs.send(true).expect("Unable to terminate jobs");
+            terminate_jobs.send(true).ok();
         },
     }
 }
@@ -189,14 +190,103 @@ where
 }
 
 async fn by_stop_name(
-    State(conn): State<Arc<Mutex<Connection>>>,
+    State(conn): State<AppState>,
     Path(stop_name): Path<String>,
 ) -> Result<Json<Vec<JourneyDelay>>, WebappError> {
-    let c = conn
-        .lock()
-        .map_err(|err| anyhow!("Unable to take conn: {err:?}"))?;
+    let c = conn.conn()?;
     let v = api::journey_delays(stop_name.as_str(), &c)?;
     Ok(Json(v))
+}
+
+fn set_up_fetch_job(
+    fetch_interval_seconds: Option<u16>,
+    recv_shutdown: Receiver<bool>,
+    mut db: Connection,
+    entur_config: Config,
+    state: AppState,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if let Some(interval_seconds) = fetch_interval_seconds {
+        let mut recv_shutdown = recv_shutdown.clone();
+        Some(tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(interval_seconds as u64));
+
+            let mut first = true;
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if first {
+                            first = false;
+                            continue;
+                        }
+                        let version = *state.next_sync.read().unwrap();
+                        if let Err(reason) = refetch_data(&mut db, &entur_config, version).await {
+                            error!("Unable to refetch: {reason:?}");
+                        } else if let Ok(mut sync_version) = state.last_successful_sync.write() {
+                                *sync_version = version;
+                        }
+                        if let Ok(mut sync_version) = state.next_sync.write() {
+                            *sync_version += 1;
+                        }
+                    }
+                    _ = recv_shutdown.changed() => {
+                        if *recv_shutdown.borrow() {
+                            info!("Shutdown job");
+                            break;
+                        }
+                    }
+                }
+            }
+        }))
+    } else {
+        None
+    }
+}
+
+#[derive(Clone)]
+struct AppState {
+    db: Arc<Mutex<Connection>>,
+    last_successful_sync: Arc<RwLock<u32>>,
+    next_sync: Arc<RwLock<u32>>,
+}
+
+#[derive(Serialize)]
+struct Healthy {
+    last_successful_sync: Option<u32>,
+    next_sync_attempt: Option<u32>,
+    healthy: bool,
+}
+
+impl IntoResponse for Healthy {
+    fn into_response(self) -> Response {
+        if self.healthy {
+            (StatusCode::OK, Json(self)).into_response()
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(self)).into_response()
+        }
+    }
+}
+
+async fn healthy(State(app_state): State<AppState>) -> Healthy {
+    let last_successful_sync = app_state.last_successful_sync.read().ok().map(|last| *last);
+    let next_sync_attempt = app_state.next_sync.read().ok().map(|now| *now);
+    let healthy = next_sync_attempt
+        .and_then(|now| last_successful_sync.map(|then| now - then < 10))
+        .unwrap_or(false);
+
+    Healthy {
+        last_successful_sync,
+        next_sync_attempt,
+        healthy,
+    }
+}
+
+impl AppState {
+    fn conn(&self) -> Result<MutexGuard<'_, Connection>, anyhow::Error> {
+        self.db
+            .lock()
+            .map_err(|err| anyhow!("Failed to get db: {err}"))
+    }
 }
 
 #[tokio::main]
@@ -222,11 +312,16 @@ async fn main() -> anyhow::Result<()> {
             port,
             fetch_interval_seconds,
         } => {
-            let (mut db, entur_config) = initial_import(shared_options).await?;
-            let app_db = db.try_clone()?;
+            let (db, entur_config) = initial_import(shared_options).await?;
+            let state = AppState {
+                db: Arc::new(Mutex::new(db.try_clone()?)),
+                last_successful_sync: Arc::new(RwLock::new(0)),
+                next_sync: Arc::new(RwLock::new(0)),
+            };
 
             let app = Router::new()
                 .route("/", get(root))
+                .route("/healthy", get(healthy))
                 .route("/stop/{stop_name}", get(by_stop_name))
                 .layer(
                     ServiceBuilder::new()
@@ -245,47 +340,19 @@ async fn main() -> anyhow::Result<()> {
                     CACHE_CONTROL,
                     HeaderValue::from_static("public, s-maxage=10, max-age=30"),
                 ))
-                .with_state(Arc::new(Mutex::new(app_db)));
+                .with_state(state.clone());
 
             let addr = format!("0.0.0.0:{}", port);
 
             let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
             let (send_shutdown, recv_shutdown) = tokio::sync::watch::channel(false);
-
-            let maybe_task = if let Some(interval_seconds) = fetch_interval_seconds {
-                let mut recv_shutdown = recv_shutdown.clone();
-                Some(tokio::spawn(async move {
-                    let mut interval =
-                        tokio::time::interval(Duration::from_secs(interval_seconds as u64));
-
-                    let mut first = true;
-                    let mut version = 1;
-
-                    loop {
-                        tokio::select! {
-                            _ = interval.tick() => {
-                                if first {
-                                    first = false;
-                                    continue;
-                                }
-                                if let Err(reason) = refetch_data(&mut db, &entur_config, version).await {
-                                    error!("Unable to refetch: {reason:?}");
-                                }
-
-                            }
-                            _ = recv_shutdown.changed() => {
-                                if *recv_shutdown.borrow() {
-                                    info!("Shutdown job");
-                                    break;
-                                }
-                            }
-                        }
-                        version += 1;
-                    }
-                }))
-            } else {
-                None
-            };
+            let maybe_task = set_up_fetch_job(
+                fetch_interval_seconds,
+                recv_shutdown,
+                db,
+                entur_config,
+                state,
+            );
 
             axum::serve(listener, app)
                 .with_graceful_shutdown(shutdown_signal(send_shutdown))
