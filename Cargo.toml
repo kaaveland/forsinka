@@ -1,6 +1,6 @@
 [package]
 name = "forsinka"
-version = "0.0.8"
+version = "0.0.9"
 edition = "2024"
 license = "MIT"
 description = "Finne forsinkede kollektivreiser i SIRI-et"
@@ -17,7 +17,7 @@ axum = { version = "0.8.6", features = ["http2"] }
 chrono = { version = "0.4.42", features = ["serde"] }
 clap = { version = "4.5.51", features = ["derive"] }
 # Would like to use loadable-extensions here, but it's not ready yet: https://github.com/duckdb/duckdb-rs/issues/536
-duckdb = { version = "1.4.1", features = ["bundled", "parquet", "chrono", "json"] }
+duckdb = { version = "1.4.1", features = ["parquet", "chrono", "json", "bundled"] }
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "rustls-tls", "http2", "blocking", "charset", "deflate", "gzip", "zstd"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"

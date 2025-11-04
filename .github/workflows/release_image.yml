@@ -57,14 +57,14 @@ jobs:
             runs-on: ubuntu-latest
             cargo: cargo
             suffix: ""
-          - toolchain: aarch64-unknown-linux-gnu
-            runs-on: ubuntu-latest
-            cargo: cross
-            suffix: ""
-          - toolchain: x86_64-apple-darwin
-            runs-on: macos-latest
-            cargo: cargo
-            suffix: ""
+          # - toolchain: aarch64-unknown-linux-gnu
+          #  runs-on: ubuntu-latest
+          #  cargo: cross
+          #  suffix: ""
+          # - toolchain: x86_64-apple-darwin
+          #  runs-on: macos-latest
+          #  cargo: cargo
+          #  suffix: ""
           - toolchain: aarch64-apple-darwin
             runs-on: macos-latest
             cargo: cargo
@@ -124,7 +124,7 @@ jobs:
           version="$(cargo read-manifest --manifest-path Cargo.toml | jq -r .version)"
           gh release download "$version"
           cp forsinka-x86_64-unknown-linux-gnu forsinka-amd64
-          cp forsinka-aarch64-unknown-linux-gnu forsinka-arm64
+          # cp forsinka-aarch64-unknown-linux-gnu forsinka-arm64
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v2
         with:
@@ -136,7 +136,7 @@ jobs:
           version="$(cargo read-manifest --manifest-path Cargo.toml | jq -r .version)"
           docker buildx create --use
           docker buildx build . \
-            --platform "linux/amd64,linux/arm64" \
+            --platform "linux/amd64" \
             -t ghcr.io/${{ github.repository }}:latest \
             -t ghcr.io/${{ github.repository }}:$version \
             --push
