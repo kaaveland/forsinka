@@ -121,8 +121,8 @@ pub struct VehicleJourneyRow {
     pub started: bool,
     pub finished: bool,
 }
-#[allow(unused)]
-fn timestamptz(micros: i64) -> DateTime<FixedOffset> {
+
+pub fn timestamptz(micros: i64) -> DateTime<FixedOffset> {
     // TODO: Preserve original timezone
     Utc.timestamp_micros(micros)
         .single()
@@ -130,8 +130,7 @@ fn timestamptz(micros: i64) -> DateTime<FixedOffset> {
         .into()
 }
 
-#[allow(unused)]
-fn optional_timestamptz(col: Option<i64>) -> Option<DateTime<FixedOffset>> {
+pub fn optional_timestamptz(col: Option<i64>) -> Option<DateTime<FixedOffset>> {
     col.map(timestamptz)
 }
 
@@ -388,14 +387,18 @@ impl VehicleJourneyAppend {
                     .and_then(|ec| ec.aimed_arrival_time.or_else(|| ec.aimed_departure_time))
                     .map(|dt| dt > Utc::now())
                     .unwrap_or(false),
-            finished: !estimated_call_rows.is_empty(),
+            finished: estimated_call_rows.is_empty(),
         };
 
-        Some(VehicleJourneyAppend {
-            vehicle_journey_row,
-            estimated_call_rows,
-            recorded_call_rows,
-        })
+        if vehicle_journey_row.started {
+            Some(VehicleJourneyAppend {
+                vehicle_journey_row,
+                estimated_call_rows,
+                recorded_call_rows,
+            })
+        } else {
+            None
+        }
     }
 }
 

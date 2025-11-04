@@ -1,12 +1,17 @@
+use crate::api::JourneyDelay;
 use crate::entur_data::{vehicle_journeys, Config};
+use anyhow::anyhow;
 use axum::error_handling::HandleErrorLayer;
+use axum::extract::{Path, State};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::Router;
+use axum::{Json, Router};
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
 use reqwest;
 use reqwest::ClientBuilder;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::signal;
 use tokio::sync::watch::Sender;
@@ -18,6 +23,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 use uuid::Uuid;
 
+mod api;
 mod db;
 mod entur_data;
 mod entur_siriformat;
@@ -155,6 +161,40 @@ async fn refetch_data(
     Ok(())
 }
 
+struct WebappError {
+    inner: anyhow::Error,
+}
+
+impl IntoResponse for WebappError {
+    fn into_response(self) -> Response {
+        error!("Error: {:?}", self.inner);
+        Response::builder()
+            .status(500)
+            .body("Internal Server Error".into())
+            .unwrap()
+    }
+}
+
+impl<E> From<E> for WebappError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(err: E) -> Self {
+        Self { inner: err.into() }
+    }
+}
+
+async fn by_stop_name(
+    State(conn): State<Arc<Mutex<Connection>>>,
+    Path(stop_name): Path<String>,
+) -> Result<Json<Vec<JourneyDelay>>, WebappError> {
+    let c = conn
+        .lock()
+        .map_err(|err| anyhow!("Unable to take conn: {err:?}"))?;
+    let v = api::journey_delays(stop_name.as_str(), &c)?;
+    Ok(Json(v))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -178,16 +218,21 @@ async fn main() -> anyhow::Result<()> {
             port,
             fetch_interval_seconds,
         } => {
-            let (mut _db, entur_config) = initial_import(shared_options).await?;
+            let (mut db, entur_config) = initial_import(shared_options).await?;
+            let app_db = db.try_clone()?;
 
-            let app = Router::new().route("/", get(root)).layer(
-                ServiceBuilder::new()
-                    .layer(HandleErrorLayer::new(|_: BoxError| async {
-                        error!("Timed out");
-                        (StatusCode::REQUEST_TIMEOUT, "Timed out. Sorry!".to_string())
-                    }))
-                    .layer(TimeoutLayer::new(Duration::from_millis(500))),
-            );
+            let app = Router::new()
+                .route("/", get(root))
+                .route("/stop/{stop_name}", get(by_stop_name))
+                .layer(
+                    ServiceBuilder::new()
+                        .layer(HandleErrorLayer::new(|_: BoxError| async {
+                            error!("Timed out");
+                            (StatusCode::REQUEST_TIMEOUT, "Timed out. Sorry!".to_string())
+                        }))
+                        .layer(TimeoutLayer::new(Duration::from_millis(500))),
+                )
+                .with_state(Arc::new(Mutex::new(app_db)));
 
             let addr = format!("0.0.0.0:{}", port);
 
@@ -210,7 +255,7 @@ async fn main() -> anyhow::Result<()> {
                                     first = false;
                                     continue;
                                 }
-                                if let Err(reason) = refetch_data(&mut _db, &entur_config, version).await {
+                                if let Err(reason) = refetch_data(&mut db, &entur_config, version).await {
                                     error!("Unable to refetch: {reason:?}");
                                 }
 

@@ -88,7 +88,7 @@ pub struct EstimatedVehicleJourney {
     pub recorded_calls: Option<RecordedCalls>,
     pub service_feature_ref: Option<Vec<StringValue>>,
     pub vehicle_mode: Option<Vec<String>>,
-    pub vehicle_ref: Option<StringValue>,
+    pub vehicle_ref: Option<OptionalStringValue>,
     pub via: Option<Vec<Via>>,
 }
 
