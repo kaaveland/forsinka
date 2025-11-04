@@ -1,5 +1,6 @@
 [tools]
 rust = "1.90.0"
+duckdb = "1.4.1"
 
 [tasks.fetch-example]
 description = "Place example data files in the data/ directory"
@@ -7,3 +8,15 @@ run = """mkdir -p data &&
 curl -H 'accept: application/json' https://api.entur.io/realtime/v1/rest/et > data/example.json &&
 curl https://kaaveland-bus-eta-data.hel1.your-objectstorage.com/quays.parquet -o data/quays.parquet &&
 curl https://kaaveland-bus-eta-data.hel1.your-objectstorage.com/stops.parquet -o data/stops.parquet"""
+
+[tasks.dev-static]
+description = "Start forsinka on example-data"
+run = "if ! [ -r data/example.json ]; then mise run fetch-example; fi; cargo run --release serve -s data/example.json --parquet-root data/"
+
+[tasks.make-db-from-json]
+description = "Make a duckdb"
+run = "if ! [ -r data/example.json ]; then mise run fetch-example; fi; cargo run --release import -s data/example.json -d data/example.db --parquet-root data/"
+
+[tasks.duckdb]
+description = "Check the data in DuckDB ui"
+run = "if ! [ -r data/example.db ];  then mise run make-db-from-json; fi; duckdb --ui data/exampledb"
