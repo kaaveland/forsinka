@@ -11,7 +11,6 @@ use clap::{Parser, Subcommand};
 use duckdb::Connection;
 use http::HeaderValue;
 use http::header::CACHE_CONTROL;
-use reqwest;
 use reqwest::ClientBuilder;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -293,7 +292,7 @@ async fn main() -> anyhow::Result<()> {
                 .await?;
 
             if let Some(task) = maybe_task {
-                let _ = task.await?;
+                task.await?;
             }
 
             info!("Terminating");

@@ -313,7 +313,7 @@ impl VehicleJourneyAppend {
                 vehicle_journey_id: id.clone(),
                 version,
                 data_source: data_source.clone(),
-                recorded_at_time: recorded_at_time.clone(),
+                recorded_at_time,
                 order: et.order,
                 aimed_arrival_time: et.aimed_arrival_time,
                 aimed_departure_time: et.aimed_departure_time,
@@ -384,7 +384,7 @@ impl VehicleJourneyAppend {
             started: !recorded_call_rows.is_empty()
                 || estimated_call_rows
                     .first()
-                    .and_then(|ec| ec.aimed_arrival_time.or_else(|| ec.aimed_departure_time))
+                    .and_then(|ec| ec.aimed_arrival_time.or(ec.aimed_departure_time))
                     .map(|dt| dt > Utc::now())
                     .unwrap_or(false),
             finished: estimated_call_rows.is_empty(),

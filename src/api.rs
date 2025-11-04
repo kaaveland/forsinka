@@ -21,7 +21,7 @@ pub fn journey_delays(
 ) -> duckdb::Result<Vec<JourneyDelay>> {
     let q = include_str!("by_stop_name.sql");
     conn.prepare(q)?
-        .query_map(&[stop_name_filter], |row| {
+        .query_map([stop_name_filter], |row| {
             Ok(JourneyDelay {
                 vehicle_journey_id: row.get(0)?,
                 line_ref: row.get(1)?,
