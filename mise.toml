@@ -19,4 +19,4 @@ run = "if ! [ -r data/example.json ]; then mise run fetch-example; fi; cargo run
 
 [tasks.duckdb]
 description = "Check the data in DuckDB ui"
-run = "if ! [ -r data/example.db ];  then mise run make-db-from-json; fi; duckdb --ui data/exampledb"
+run = "if ! [ -r data/example.db ];  then mise run make-db-from-json; fi; duckdb --ui data/example.db"
