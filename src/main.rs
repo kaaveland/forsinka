@@ -1,16 +1,16 @@
 use crate::api::JourneyDelay;
-use crate::entur_data::{vehicle_journeys, Config};
+use crate::entur_data::{Config, vehicle_journeys};
 use anyhow::anyhow;
 use axum::error_handling::HandleErrorLayer;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{http, Json, Router};
+use axum::{Json, Router, http};
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
-use http::header::CACHE_CONTROL;
 use http::HeaderValue;
+use http::header::CACHE_CONTROL;
 use reqwest::ClientBuilder;
 use serde::Serialize;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
@@ -198,6 +198,14 @@ async fn by_stop_name(
     Ok(Json(v))
 }
 
+async fn stop_names(State(conn): State<AppState>) -> Result<Json<Vec<String>>, WebappError> {
+    let c = conn.conn()?;
+    let stops: Result<Vec<String>, _> = c.
+        prepare("from stopdata join estimated_call using (stop_point_ref) select distinct name where name is not null")?.
+        query_map([], |row| Ok(row.get::<_, String>(0)?))?.collect();
+    Ok(Json(stops?))
+}
+
 fn set_up_fetch_job(
     fetch_interval_seconds: Option<u16>,
     recv_shutdown: Receiver<bool>,
@@ -323,6 +331,7 @@ async fn main() -> anyhow::Result<()> {
                 .route("/", get(root))
                 .route("/healthy", get(healthy))
                 .route("/stop/{stop_name}", get(by_stop_name))
+                .route("/stops", get(stop_names))
                 .layer(
                     ServiceBuilder::new()
                         .layer(HandleErrorLayer::new(|_: BoxError| async {
