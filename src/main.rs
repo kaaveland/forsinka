@@ -202,7 +202,7 @@ async fn stop_names(State(conn): State<AppState>) -> Result<Json<Vec<String>>, W
     let c = conn.conn()?;
     let stops: Result<Vec<String>, _> = c.
         prepare("from stopdata join estimated_call using (stop_point_ref) select distinct name where name is not null")?.
-        query_map([], |row| Ok(row.get::<_, String>(0)?))?.collect();
+        query_map([], |row| row.get(0))?.collect();
     Ok(Json(stops?))
 }
 

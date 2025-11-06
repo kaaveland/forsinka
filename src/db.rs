@@ -83,26 +83,33 @@ pub fn replace_data(
 
     tx.execute_batch(
             format!(
-                "create or replace table estimated_call as {WITH_CURRENT} from estimated_call join current using(vehicle_journey_id, version, recorded_at_time);"
+                "create or replace table estimated_call as {WITH_CURRENT}
+                  from estimated_call join current using(vehicle_journey_id, version, recorded_at_time);
+                 create index estimated_call_idx on estimated_call(vehicle_journey_id);"
             )
             .as_str(),
         )?;
 
     tx.execute_batch(
             format!(
-                "create or replace table recorded_call as {WITH_CURRENT} from recorded_call join current using(vehicle_journey_id, version, recorded_at_time);"
+                "create or replace table recorded_call as {WITH_CURRENT}
+                  from recorded_call join current using(vehicle_journey_id, version, recorded_at_time);
+                 create index recorded_call_idx on recorded_call(vehicle_journey_id);"
             )
             .as_str(),
         )?;
 
     tx.execute_batch(
             format!(
-                "create or replace table vehicle_journey as {WITH_CURRENT} from vehicle_journey join current using(vehicle_journey_id, version, recorded_at_time);"
+                "create or replace table vehicle_journey as {WITH_CURRENT}
+                   from vehicle_journey join current using(vehicle_journey_id, version, recorded_at_time);
+                 create index vehicle_journey_idx on recorded_call(vehicle_journey_id);"
             )
                 .as_str(),
         )?;
 
     tx.commit()?;
     tracing::Span::current().record("duration_ms", start.elapsed().as_millis());
+    db.execute_batch("checkpoint; analyze")?;
     Ok(())
 }
