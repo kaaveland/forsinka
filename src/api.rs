@@ -35,3 +35,61 @@ pub fn journey_delays(
         })?
         .collect()
 }
+
+const CURRENT_TRAIN: &str = "
+with next_stop as (from estimated_call join stopdata s using (stop_point_ref)
+select distinct on (vehicle_journey_id)
+  s.name next_stop, aimed_arrival_time next_stop_time, vehicle_journey_id
+order by aimed_arrival_time asc
+)
+
+from vehicle_journey vj join recorded_call rc on vj.vehicle_journey_id = rc.vehicle_journey_id
+  join stopdata s using (stop_point_ref)
+  left join next_stop ns on vj.vehicle_journey_id = ns.vehicle_journey_id
+select distinct on (vj.vehicle_journey_id)
+  vj.vehicle_journey_id,
+  vj.line_ref,
+  vj.cancellation,
+  vj.data_source,
+  s.name stop_name,
+  ns.next_stop next_stop_name,
+  coalesce(rc.aimed_arrival_time, rc.aimed_departure_time) aimed_time,
+  coalesce(rc.actual_arrival_time, rc.actual_departure_time) actual_time,
+  (extract (epoch from actual_time - aimed_time)) :: int4 as delay_seconds,
+  ns.next_stop_time
+where (vj.started and not vj.finished) and vj.data_source in ('VYG', 'BNR', 'SJN', 'FLY', 'FLT')
+order by vj.vehicle_journey_id, aimed_time desc
+";
+
+#[derive(Serialize)]
+pub struct TrainJourney {
+    vehicle_journey_id: String,
+    line_ref: String,
+    cancellation: bool,
+    data_source: String,
+    stop_name: String,
+    next_stop_name: Option<String>,
+    aimed_time: DateTime<FixedOffset>,
+    actual_time: DateTime<FixedOffset>,
+    delay_seconds: i32,
+    next_stop_time: Option<DateTime<FixedOffset>>,
+}
+
+pub fn train_journeys(conn: &Connection) -> duckdb::Result<Vec<TrainJourney>> {
+    conn.prepare(CURRENT_TRAIN)?
+        .query_map([], |row| {
+            Ok(TrainJourney {
+                vehicle_journey_id: row.get(0)?,
+                line_ref: row.get(1)?,
+                cancellation: row.get(2)?,
+                data_source: row.get(3)?,
+                stop_name: row.get(4)?,
+                next_stop_name: row.get(5)?,
+                aimed_time: timestamptz(row.get(6)?),
+                actual_time: timestamptz(row.get(7)?),
+                delay_seconds: row.get(8)?,
+                next_stop_time: optional_timestamptz(row.get(9)?),
+            })
+        })?
+        .collect()
+}
