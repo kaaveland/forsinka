@@ -77,8 +77,9 @@ jobs:
         with:
           targets: ${{ matrix.target.toolchain }}
       - uses: Swatinem/rust-cache@v2
-      - uses: cargo-bins/cargo-binstall@main
-        if: ${{ matrix.target.cargo == 'cross' }}
+        with:
+          shared-key: "release-${{ matrix.target.toolchain }}"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cross
         if: ${{ matrix.target.cargo == 'cross' }}
         run: cargo binstall -y --force cross
