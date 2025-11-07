@@ -1,7 +1,7 @@
 use crate::api::JourneyDelay;
 use crate::api::TrainJourney;
 use crate::api::TrainsPage;
-use crate::entur_data::{vehicle_journeys, Config};
+use crate::entur_data::{Config, vehicle_journeys};
 use anyhow::anyhow;
 use askama::Template;
 use axum::error_handling::HandleErrorLayer;
@@ -9,11 +9,11 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{http, Json, Router};
+use axum::{Json, Router, http};
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
-use http::header::CACHE_CONTROL;
 use http::HeaderValue;
+use http::header::CACHE_CONTROL;
 use reqwest::ClientBuilder;
 use serde::Serialize;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
@@ -86,6 +86,8 @@ enum Commands {
         /// Check for new data every fetch-interval seconds. If not provided, never refetch.
         #[arg(short = 'i', long = "fetch-interval-seconds")]
         fetch_interval_seconds: Option<u16>,
+        #[arg(long = "assets-path", default_value = "/static")]
+        assets_path: String,
     },
 }
 
@@ -194,18 +196,18 @@ where
 }
 
 async fn by_stop_name(
-    State(conn): State<AppState>,
+    State(state): State<AppState>,
     Path(stop_name): Path<String>,
 ) -> Result<Json<Vec<JourneyDelay>>, WebappError> {
-    let c = conn.conn()?;
+    let c = state.conn()?;
     let v = api::journey_delays(stop_name.as_str(), &c)?;
     Ok(Json(v))
 }
 
 async fn train_journeys(
-    State(conn): State<AppState>,
+    State(state): State<AppState>,
 ) -> Result<Json<Vec<TrainJourney>>, WebappError> {
-    let c = conn.conn()?;
+    let c = state.conn()?;
     let v = api::train_journeys(&c)?;
     Ok(Json(v))
 }
@@ -248,15 +250,15 @@ impl IntoResponse for TrainsPage {
 }
 
 async fn train_journeys_html(
-    State(conn): State<AppState>,
+    State(state): State<AppState>,
 ) -> Result<impl IntoResponse, WebappError> {
-    let c = conn.conn()?;
+    let c = state.conn()?;
     let trains = api::train_journeys(&c)?;
-    Ok(TrainsPage::new(trains))
+    Ok(TrainsPage::new(trains, state.assets_path.clone()))
 }
 
-async fn stop_names(State(conn): State<AppState>) -> Result<Json<Vec<String>>, WebappError> {
-    let c = conn.conn()?;
+async fn stop_names(State(state): State<AppState>) -> Result<Json<Vec<String>>, WebappError> {
+    let c = state.conn()?;
     let stops: Result<Vec<String>, _> = c.
         prepare("from stopdata join estimated_call using (stop_point_ref) select distinct name where name is not null")?.
         query_map([], |row| row.get(0))?.collect();
@@ -313,6 +315,7 @@ struct AppState {
     db: Arc<Mutex<Connection>>,
     last_successful_sync: Arc<RwLock<u32>>,
     next_sync: Arc<RwLock<u32>>,
+    assets_path: String,
 }
 
 #[derive(Serialize)]
@@ -376,12 +379,14 @@ async fn main() -> anyhow::Result<()> {
             shared_options,
             port,
             fetch_interval_seconds,
+            assets_path,
         } => {
             let (db, entur_config) = initial_import(shared_options).await?;
             let state = AppState {
                 db: Arc::new(Mutex::new(db.try_clone()?)),
                 last_successful_sync: Arc::new(RwLock::new(0)),
                 next_sync: Arc::new(RwLock::new(0)),
+                assets_path,
             };
 
             let app = Router::new()

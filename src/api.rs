@@ -129,10 +129,11 @@ pub struct TrainsPage {
     pub timestamp: String,
     pub delayed_count: usize,
     pub stuck_count: usize,
+    pub assets_path: String,
 }
 
 impl TrainsPage {
-    pub fn new(trains: Vec<TrainJourney>) -> Self {
+    pub fn new(trains: Vec<TrainJourney>, assets_path: String) -> Self {
         let delayed_count = trains.iter().filter(|t| t.delay_seconds > 300).count();
         let stuck_count = trains.iter().filter(|t| t.possibly_stuck).count();
         let now_oslo = Utc::now().with_timezone(&Oslo);
@@ -143,6 +144,7 @@ impl TrainsPage {
             timestamp,
             delayed_count,
             stuck_count,
+            assets_path,
         }
     }
 }

@@ -4,108 +4,108 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Tog i Norge - forsinka</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="{{ assets_path }}/style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>🚂 Tog i Norge</h1>
-            <p class="subtitle">Sanntidsinformasjon om togforsinkelser</p>
-            <div class="nav">
-                <a href="/trains" class="json-link">JSON API</a>
-                <span class="last-updated">Sist oppdatert: {{ timestamp }}</span>
-            </div>
-        </header>
-
-        {% if trains.is_empty() %}
-        <div class="no-data">
-            <p>Ingen togdata tilgjengelig for øyeblikket.</p>
+<div class="container">
+    <header>
+        <h1>🚂 Tog i Norge</h1>
+        <p class="subtitle">Sanntidsinformasjon om togforsinkelser</p>
+        <div class="nav">
+            <a href="/trains" class="json-link">JSON API</a>
+            <span class="last-updated">Sist oppdatert: {{ timestamp }}</span>
         </div>
-        {% else %}
-        <div class="summary">
-            <div class="stat">
-                <span class="stat-value">{{ trains.len() }}</span>
-                <span class="stat-label">Tog i trafikk</span>
-            </div>
-            <div class="stat">
-                <span class="stat-value">{{ delayed_count }}</span>
-                <span class="stat-label">Forsinket</span>
-            </div>
-            <div class="stat">
-                <span class="stat-value">{{ stuck_count }}</span>
-                <span class="stat-label">Mulig stoppet</span>
-            </div>
-        </div>
+    </header>
 
-        <table class="trains-table">
-            <thead>
-                <tr>
-                    <th>Linje</th>
-                    <th>Siste stoppested</th>
-                    <th>Planlagt</th>
-                    <th>Faktisk</th>
-                    <th>Forsinkelse</th>
-                    <th>Neste stopp</th>
-                    <th>Status</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for train in trains %}
-                <tr class="{% if train.possibly_stuck %}stuck{% else if train.cancellation %}cancelled{% else if train.delay_seconds > 300 %}delayed{% endif %}">
-                    <td class="line-ref">
-                        <strong>{{ train.line_ref }}</strong>
-                        <span class="data-source">{{ train.data_source }}</span>
-                    </td>
-                    <td class="stop-name">{{ train.stop_name }}</td>
-                    <td class="time">{{ train.aimed_time|format_time }}</td>
-                    <td class="time">{{ train.actual_time|format_time }}</td>
-                    <td class="delay">
-                        {% if train.delay_seconds > 60 %}
-                            <span class="delay-badge {% if train.delay_seconds > 600 %}severe{% else if train.delay_seconds > 300 %}moderate{% else %}minor{% endif %}">
+    {% if trains.is_empty() %}
+    <div class="no-data">
+        <p>Ingen togdata tilgjengelig for øyeblikket.</p>
+    </div>
+    {% else %}
+    <div class="summary">
+        <div class="stat">
+            <span class="stat-value">{{ trains.len() }}</span>
+            <span class="stat-label">Tog i trafikk</span>
+        </div>
+        <div class="stat">
+            <span class="stat-value">{{ delayed_count }}</span>
+            <span class="stat-label">Forsinket</span>
+        </div>
+        <div class="stat">
+            <span class="stat-value">{{ stuck_count }}</span>
+            <span class="stat-label">Mulig stoppet</span>
+        </div>
+    </div>
+
+    <table class="trains-table">
+        <thead>
+        <tr>
+            <th>Linje</th>
+            <th>Siste stoppested</th>
+            <th>Planlagt</th>
+            <th>Faktisk</th>
+            <th>Forsinkelse</th>
+            <th>Neste stopp</th>
+            <th>Status</th>
+        </tr>
+        </thead>
+        <tbody>
+        {% for train in trains %}
+        <tr class="{% if train.possibly_stuck %}stuck{% else if train.cancellation %}cancelled{% else if train.delay_seconds > 300 %}delayed{% endif %}">
+            <td class="line-ref">
+                <strong>{{ train.line_ref }}</strong>
+                <span class="data-source">{{ train.data_source }}</span>
+            </td>
+            <td class="stop-name">{{ train.stop_name }}</td>
+            <td class="time">{{ train.aimed_time|format_time }}</td>
+            <td class="time">{{ train.actual_time|format_time }}</td>
+            <td class="delay">
+                {% if train.delay_seconds > 60 %}
+                <span class="delay-badge {% if train.delay_seconds > 600 %}severe{% else if train.delay_seconds > 300 %}moderate{% else %}minor{% endif %}">
                                 +{{ train.delay_seconds|format_delay }}
                             </span>
-                        {% else if train.delay_seconds < -60 %}
-                            <span class="delay-badge early">
+                {% else if train.delay_seconds < -60 %}
+                <span class="delay-badge early">
                                 {{ train.delay_seconds|format_delay }}
                             </span>
-                        {% else %}
-                            <span class="on-time">i rute</span>
-                        {% endif %}
-                    </td>
-                    <td class="next-stop">
-                        {% match train.next_stop_name %}
-                            {% when Some with (name) %}
-                                {{ name }}
-                                {% match train.next_stop_time %}
-                                    {% when Some with (time) %}
-                                        <span class="next-time">({{ time|format_time }})</span>
-                                    {% when None %}
-                                {% endmatch %}
-                            {% when None %}
-                                <span class="no-data">—</span>
-                        {% endmatch %}
-                    </td>
-                    <td class="status">
-                        {% if train.cancellation %}
-                            <span class="status-badge cancelled">❌ Kansellert</span>
-                        {% else if train.possibly_stuck %}
-                            <span class="status-badge stuck">⚠️ Mulig stoppet</span>
-                        {% else if !train.departed %}
-                            <span class="status-badge waiting">⏸️ Venter</span>
-                        {% else %}
-                            <span class="status-badge running">✓ Kjører</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% endif %}
+                {% else %}
+                <span class="on-time">i rute</span>
+                {% endif %}
+            </td>
+            <td class="next-stop">
+                {% match train.next_stop_name %}
+                {% when Some with (name) %}
+                {{ name }}
+                {% match train.next_stop_time %}
+                {% when Some with (time) %}
+                <span class="next-time">({{ time|format_time }})</span>
+                {% when None %}
+                {% endmatch %}
+                {% when None %}
+                <span class="no-data">—</span>
+                {% endmatch %}
+            </td>
+            <td class="status">
+                {% if train.cancellation %}
+                <span class="status-badge cancelled">❌ Kansellert</span>
+                {% else if train.possibly_stuck %}
+                <span class="status-badge stuck">⚠️ Mulig stoppet</span>
+                {% else if !train.departed %}
+                <span class="status-badge waiting">⏸️ Venter</span>
+                {% else %}
+                <span class="status-badge running">✓ Kjører</span>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
 
-        <footer>
-            <p>Data fra <a href="https://entur.no" target="_blank">Entur</a> via SIRI-ET API</p>
-            <p><a href="https://github.com/kaaveland/forsinka">forsinka</a> - MIT License</p>
-        </footer>
-    </div>
+    <footer>
+        <p>Data fra <a href="https://entur.no" target="_blank">Entur</a> via SIRI-ET API</p>
+        <p><a href="https://github.com/kaaveland/forsinka">forsinka</a> - MIT License</p>
+    </footer>
+</div>
 </body>
 </html>
