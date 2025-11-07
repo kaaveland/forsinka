@@ -127,8 +127,8 @@ async fn initial_import(args: SharedOptions) -> anyhow::Result<(Connection, Conf
     Ok((db, config))
 }
 
-async fn root() -> &'static str {
-    "Hello, World"
+async fn root() -> impl IntoResponse {
+    axum::response::Redirect::to("trains.html")
 }
 
 async fn shutdown_signal(terminate_jobs: Sender<bool>) {
