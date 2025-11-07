@@ -90,8 +90,6 @@
                 <span class="status-badge cancelled">❌ Kansellert</span>
                 {% else if train.possibly_stuck %}
                 <span class="status-badge stuck">⚠️ Mulig stoppet</span>
-                {% else if !train.departed %}
-                <span class="status-badge waiting">⏸️ Venter</span>
                 {% else %}
                 <span class="status-badge running">✓ Kjører</span>
                 {% endif %}
