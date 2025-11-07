@@ -48,41 +48,44 @@ with next_stop as (
 ), prev_stop as (
   from recorded_call join stopdata s using (stop_point_ref)
   select distinct on (vehicle_journey_id)
-   s.name stop_name,
-   coalesce(aimed_arrival_time, aimed_departure_time) aimed_time,
-   coalesce(actual_arrival_time, actual_departure_time) actual_time,
-   actual_departure_time is null as departed,
-  actual_time - aimed_time as delay,
-   (extract (epoch from delay)) :: int4 as delay_seconds,
-   vehicle_journey_id,
-   data_source
+    s.name stop_name,
+    coalesce(aimed_arrival_time, aimed_departure_time) aimed_time,
+    coalesce(actual_arrival_time, actual_departure_time) actual_time,
+    actual_departure_time is null as departed,
+    actual_time - aimed_time as delay,
+    (extract (epoch from delay)) :: int4 as delay_seconds,
+    vehicle_journey_id,
+    data_source,
+    recorded_at_time
   where data_source in ('VYG', 'BNR', 'SJN', 'FLY', 'FLT')
   order by aimed_time desc
-)
-from vehicle_journey vj join prev_stop rc using(vehicle_journey_id, data_source)
-  left join next_stop ns using(vehicle_journey_id, data_source)
-select
-  vj.vehicle_journey_id,
-  vj.line_ref,
-  vj.cancellation,
-  vj.data_source,
-  rc.stop_name,
-  ns.next_stop next_stop_name,
-  rc.aimed_time,
-  rc.actual_time,
-  rc.delay_seconds,
-  ns.next_stop_time,
-  rc.departed,
--- The train might be stuck if the current timestamp is larger than the previous arrival time
--- plus the planned travel time to the next stop plus the known delay plus a 5 minute safety margin.
--- Stated differently: if it gained another 5 minutes of delay between rc.stop_name and ns.next_stop
-  coalesce(
-    rc.aimed_time +
-    (ns.next_stop_time - rc.aimed_time) -- planned travel time
-    + greatest(interval '0 minutes', rc.delay) + interval '5 minutes' -- 5 minute extra delay on this leg
-  < now(), false) as possibly_stuck,
-where (vj.started and not vj.finished) and vj.data_source in ('VYG', 'BNR', 'SJN', 'FLY', 'FLT')
-order by possibly_stuck desc, line_ref, actual_time desc
+), complete as (
+  from vehicle_journey vj join prev_stop rc using(vehicle_journey_id, data_source)
+    left join next_stop ns using(vehicle_journey_id, data_source)
+  select distinct on(vj.vehicle_journey_id)
+    vj.vehicle_journey_id,
+    vj.line_ref,
+    vj.cancellation,
+    vj.data_source,
+    rc.stop_name,
+    ns.next_stop next_stop_name,
+    rc.aimed_time,
+    rc.actual_time,
+    rc.delay_seconds,
+    ns.next_stop_time,
+    rc.departed,
+    -- The train might be stuck if the current timestamp is larger than the previous arrival time
+    -- plus the planned travel time to the next stop plus the known delay plus a 5 minute safety margin.
+    -- Stated differently: if it gained another 5 minutes of delay between rc.stop_name and ns.next_stop
+    coalesce(
+      rc.aimed_time +
+      (ns.next_stop_time - rc.aimed_time) -- planned travel time
+      + greatest(interval '0 minutes', rc.delay) + interval '5 minutes' -- 5 minute extra delay on this leg
+    < now(), false) as possibly_stuck,
+  where (vj.started and not vj.finished) and vj.data_source in ('VYG', 'BNR', 'SJN', 'FLY', 'FLT')
+  order by vj.recorded_at_time, rc.recorded_at_time)
+from complete select *
+order by possibly_stuck desc, delay_seconds desc, actual_time desc
 ";
 
 #[derive(Serialize)]
@@ -134,7 +137,7 @@ pub struct TrainsPage {
 
 impl TrainsPage {
     pub fn new(trains: Vec<TrainJourney>, assets_path: String) -> Self {
-        let delayed_count = trains.iter().filter(|t| t.delay_seconds > 300).count();
+        let delayed_count = trains.iter().filter(|t| t.delay_seconds > 60).count();
         let stuck_count = trains.iter().filter(|t| t.possibly_stuck).count();
         let now_oslo = Utc::now().with_timezone(&Oslo);
         let timestamp = now_oslo.format("%Y-%m-%d %H:%M:%S").to_string();
