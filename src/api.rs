@@ -1,5 +1,7 @@
 use crate::entur_data::{optional_timestamptz, timestamptz};
-use chrono::{DateTime, FixedOffset};
+use askama::Template;
+use chrono::{DateTime, FixedOffset, Utc};
+use chrono_tz::Europe::Oslo;
 use duckdb::Connection;
 use serde::Serialize;
 
@@ -85,18 +87,18 @@ order by possibly_stuck desc, line_ref, actual_time desc
 
 #[derive(Serialize)]
 pub struct TrainJourney {
-    vehicle_journey_id: String,
-    line_ref: String,
-    cancellation: bool,
-    data_source: String,
-    stop_name: String,
-    next_stop_name: Option<String>,
-    aimed_time: DateTime<FixedOffset>,
-    actual_time: DateTime<FixedOffset>,
-    delay_seconds: i32,
-    next_stop_time: Option<DateTime<FixedOffset>>,
-    departed: bool,
-    possibly_stuck: bool,
+    pub vehicle_journey_id: String,
+    pub line_ref: String,
+    pub cancellation: bool,
+    pub data_source: String,
+    pub stop_name: String,
+    pub next_stop_name: Option<String>,
+    pub aimed_time: DateTime<FixedOffset>,
+    pub actual_time: DateTime<FixedOffset>,
+    pub delay_seconds: i32,
+    pub next_stop_time: Option<DateTime<FixedOffset>>,
+    pub departed: bool,
+    pub possibly_stuck: bool,
 }
 
 pub fn train_journeys(conn: &Connection) -> duckdb::Result<Vec<TrainJourney>> {
@@ -118,4 +120,45 @@ pub fn train_journeys(conn: &Connection) -> duckdb::Result<Vec<TrainJourney>> {
             })
         })?
         .collect()
+}
+
+#[derive(Template)]
+#[template(path = "trains.html")]
+pub struct TrainsPage {
+    pub trains: Vec<TrainJourney>,
+    pub timestamp: String,
+    pub delayed_count: usize,
+    pub stuck_count: usize,
+}
+
+impl TrainsPage {
+    pub fn new(trains: Vec<TrainJourney>) -> Self {
+        let delayed_count = trains.iter().filter(|t| t.delay_seconds > 300).count();
+        let stuck_count = trains.iter().filter(|t| t.possibly_stuck).count();
+        let now_oslo = Utc::now().with_timezone(&Oslo);
+        let timestamp = now_oslo.format("%Y-%m-%d %H:%M:%S").to_string();
+
+        Self {
+            trains,
+            timestamp,
+            delayed_count,
+            stuck_count,
+        }
+    }
+}
+
+// Askama template filters
+mod filters {
+    use chrono::{DateTime, FixedOffset};
+    use chrono_tz::Europe::Oslo;
+
+    pub fn format_time(dt: &DateTime<FixedOffset>) -> ::askama::Result<String> {
+        let oslo_time = dt.with_timezone(&Oslo);
+        Ok(oslo_time.format("%H:%M").to_string())
+    }
+
+    pub fn format_delay(seconds: &i32) -> ::askama::Result<String> {
+        let minutes = seconds / 60;
+        Ok(format!("{} min", minutes))
+    }
 }

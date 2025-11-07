@@ -1,17 +1,19 @@
 use crate::api::JourneyDelay;
 use crate::api::TrainJourney;
-use crate::entur_data::{Config, vehicle_journeys};
+use crate::api::TrainsPage;
+use crate::entur_data::{vehicle_journeys, Config};
 use anyhow::anyhow;
+use askama::Template;
 use axum::error_handling::HandleErrorLayer;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use axum::{Json, Router, http};
+use axum::{http, Json, Router};
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
-use http::HeaderValue;
 use http::header::CACHE_CONTROL;
+use http::HeaderValue;
 use reqwest::ClientBuilder;
 use serde::Serialize;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
@@ -22,6 +24,7 @@ use tower::timeout::TimeoutLayer;
 use tower::{BoxError, ServiceBuilder};
 use tower_http::cors;
 use tower_http::cors::CorsLayer;
+use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{error, info};
 use tracing_subscriber::fmt;
@@ -207,6 +210,51 @@ async fn train_journeys(
     Ok(Json(v))
 }
 
+const TEMPLATE_ERROR_HTML: &str = r#"<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Feil - forsinka</title>
+    <style>
+        body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
+        .error { background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center; }
+        h1 { color: #d32f2f; margin-bottom: 20px; }
+        p { color: #666; }
+        a { color: #667eea; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="error">
+        <h1>⚠️ En ukjent feil oppsto</h1>
+        <p>Beklager, vi kunne ikke vise siden.</p>
+        <p><a href="/trains">Prøv JSON API</a> eller <a href="/">tilbake til forsiden</a></p>
+    </div>
+</body>
+</html>"#;
+
+impl IntoResponse for TrainsPage {
+    fn into_response(self) -> Response {
+        if let Ok(html) = self.render() {
+            axum::response::Html(html).into_response()
+        } else {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::response::Html(TEMPLATE_ERROR_HTML),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn train_journeys_html(
+    State(conn): State<AppState>,
+) -> Result<impl IntoResponse, WebappError> {
+    let c = conn.conn()?;
+    let trains = api::train_journeys(&c)?;
+    Ok(TrainsPage::new(trains))
+}
+
 async fn stop_names(State(conn): State<AppState>) -> Result<Json<Vec<String>>, WebappError> {
     let c = conn.conn()?;
     let stops: Result<Vec<String>, _> = c.
@@ -342,6 +390,8 @@ async fn main() -> anyhow::Result<()> {
                 .route("/stop/{stop_name}", get(by_stop_name))
                 .route("/stops", get(stop_names))
                 .route("/trains", get(train_journeys))
+                .route("/trains.html", get(train_journeys_html))
+                .nest_service("/static", ServeDir::new("static"))
                 .layer(
                     ServiceBuilder::new()
                         .layer(HandleErrorLayer::new(|_: BoxError| async {

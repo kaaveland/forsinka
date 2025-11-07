@@ -1,6 +1,6 @@
 [package]
 name = "forsinka"
-version = "0.0.15"
+version = "0.0.16"
 edition = "2024"
 license = "MIT"
 description = "Finne forsinkede kollektivreiser i SIRI-et"
@@ -13,8 +13,10 @@ homepage = "https://github.com/kaaveland/forsinka"
 
 [dependencies]
 anyhow = "1.0.100"
+askama = "0.13"
 axum = { version = "0.8.6", features = ["http2"] }
 chrono = { version = "0.4.42", features = ["serde"] }
+chrono-tz = "0.10"
 clap = { version = "4.5.51", features = ["derive"] }
 # Would like to use loadable-extensions here, but it's not ready yet: https://github.com/duckdb/duckdb-rs/issues/536
 duckdb = { version = "1.4.1", features = ["parquet", "chrono", "json", "bundled"] }
@@ -24,7 +26,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 tokio = { version = "1.48.0", features = ["full"] }
 tower = { version = "0.5.2", features = ["timeout", "tokio", "tracing"] }
-tower-http = { version = "0.6.6", features = ["cors", "set-header"] }
+tower-http = { version = "0.6.6", features = ["cors", "set-header", "fs"] }
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 uuid = { version = "1.18.1", features = ["v4"] }
