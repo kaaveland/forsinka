@@ -7,14 +7,14 @@ use serde::Serialize;
 
 #[derive(Serialize)]
 pub struct JourneyDelay {
-    vehicle_journey_id: String,
-    line_ref: String,
-    last_stop_name: String,
-    aimed_last_stop_time: DateTime<FixedOffset>,
-    actual_last_stop_time: DateTime<FixedOffset>,
-    recorded_delay_seconds: i32,
-    next_stop_name: Option<String>,
-    aimed_next_stop_time: Option<DateTime<FixedOffset>>,
+    pub vehicle_journey_id: String,
+    pub line_ref: String,
+    pub last_stop_name: String,
+    pub aimed_last_stop_time: DateTime<FixedOffset>,
+    pub actual_last_stop_time: DateTime<FixedOffset>,
+    pub recorded_delay_seconds: i32,
+    pub next_stop_name: Option<String>,
+    pub aimed_next_stop_time: Option<DateTime<FixedOffset>>,
 }
 
 pub fn journey_delays(

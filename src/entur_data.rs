@@ -58,7 +58,7 @@ pub async fn fetch_data(config: &Config) -> anyhow::Result<SiriETResponse> {
     }
 }
 
-pub async fn fetch_journeys<'a>(config: &Config, stops: &'a Stops) -> anyhow::Result<Journeys<'a>> {
+pub async fn fetch_journeys(config: &Config, stops: &Stops) -> anyhow::Result<Journeys> {
     let data = fetch_data(config).await?;
     Ok(Journeys::new(
         stops,

@@ -23,7 +23,7 @@ pub struct StopRow {
 }
 
 pub fn read_stops(db: &Connection) -> duckdb::Result<Vec<StopRow>> {
-    db.prepare("from stopdata select name, stop_point_ref, lat, lon")?
+    db.prepare("from stopdata select name, stop_point_ref, lat, lon where name is not null")?
         .query_map([], |row| {
             Ok(StopRow {
                 name: row.get(0)?,

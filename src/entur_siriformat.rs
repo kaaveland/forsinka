@@ -13,6 +13,20 @@ pub struct SiriETResponse {
     pub siri: Siri,
 }
 
+impl SiriETResponse {
+    pub fn journeys(self) -> impl Iterator<Item = EstimatedVehicleJourney> {
+        self.siri
+            .service_delivery
+            .estimated_timetable_delivery
+            .into_iter()
+            .flat_map(|et| {
+                et.estimated_journey_version_frame
+                    .into_iter()
+                    .flat_map(|f| f.estimated_vehicle_journey.into_iter())
+            })
+    }
+}
+
 #[derive(Deserialize, Debug)]
 pub struct Siri {
     #[serde(rename = "ServiceDelivery")]
