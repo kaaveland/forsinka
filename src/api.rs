@@ -37,25 +37,37 @@ pub fn journey_delays(
 }
 
 const CURRENT_TRAIN: &str = "
-with next_stop as (from estimated_call join stopdata s using (stop_point_ref)
-select distinct on (vehicle_journey_id)
-  s.name next_stop, aimed_arrival_time next_stop_time, vehicle_journey_id
-order by aimed_arrival_time asc
+with next_stop as (
+  from estimated_call join stopdata s using (stop_point_ref)
+  select distinct on (vehicle_journey_id)
+    s.name next_stop, aimed_arrival_time next_stop_time, vehicle_journey_id, data_source
+  where data_source in ('VYG', 'BNR', 'SJN', 'FLY', 'FLT')
+  order by aimed_arrival_time asc
+), prev_stop as (
+  from recorded_call join stopdata s using (stop_point_ref)
+  select distinct on (vehicle_journey_id)
+   s.name stop_name,
+   coalesce(aimed_arrival_time, aimed_departure_time) aimed_time,
+   coalesce(actual_arrival_time, actual_departure_time) actual_time,
+  actual_time - aimed_time as delay,
+   (extract (epoch from delay)) :: int4 as delay_seconds,
+   vehicle_journey_id,
+   data_source
+  where data_source in ('VYG', 'BNR', 'SJN', 'FLY', 'FLT')
+  order by aimed_time desc
 )
-
-from vehicle_journey vj join recorded_call rc on vj.vehicle_journey_id = rc.vehicle_journey_id
-  join stopdata s using (stop_point_ref)
-  left join next_stop ns on vj.vehicle_journey_id = ns.vehicle_journey_id
-select distinct on (vj.vehicle_journey_id)
+from vehicle_journey vj join prev_stop rc using(vehicle_journey_id, data_source)
+  left join next_stop ns using(vehicle_journey_id, data_source)
+select
   vj.vehicle_journey_id,
   vj.line_ref,
   vj.cancellation,
   vj.data_source,
-  s.name stop_name,
+  rc.stop_name,
   ns.next_stop next_stop_name,
-  coalesce(rc.aimed_arrival_time, rc.aimed_departure_time) aimed_time,
-  coalesce(rc.actual_arrival_time, rc.actual_departure_time) actual_time,
-  (extract (epoch from actual_time - aimed_time)) :: int4 as delay_seconds,
+  rc.aimed_time,
+  rc.actual_time,
+  rc.delay_seconds,
   ns.next_stop_time
 where (vj.started and not vj.finished) and vj.data_source in ('VYG', 'BNR', 'SJN', 'FLY', 'FLT')
 order by vj.vehicle_journey_id, aimed_time desc
