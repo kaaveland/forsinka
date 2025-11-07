@@ -1,7 +1,7 @@
 use crate::api::JourneyDelay;
 use crate::api::TrainJourney;
 use crate::api::TrainsPage;
-use crate::entur_data::{Config, vehicle_journeys};
+use crate::entur_data::Config;
 use crate::entur_siriformat::SiriETResponse;
 use crate::membased::{Journeys, Stops};
 use askama::Template;
@@ -31,7 +31,7 @@ use tower_http::cors;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
-use tracing::{error, info};
+use tracing::{error, info, instrument};
 use tracing_subscriber::fmt;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -181,6 +181,7 @@ where
     }
 }
 
+#[instrument(name = "by_stop_name", skip_all)]
 async fn by_stop_name(
     State(state): State<AppState>,
     Path(stop_name): Path<String>,
@@ -190,6 +191,7 @@ async fn by_stop_name(
     Ok(Json(journeys.map(|journey| journey.into()).collect()))
 }
 
+#[instrument(name = "train_journeys", skip_all)]
 async fn train_journeys(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<TrainJourney>>, WebappError> {
@@ -241,6 +243,7 @@ impl IntoResponse for TrainsPage {
     }
 }
 
+#[instrument(name = "train_journeys_html", skip_all)]
 async fn train_journeys_html(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, WebappError> {
@@ -268,6 +271,7 @@ struct AppState {
     assets_path: String,
 }
 
+#[instrument(name = "replace_state", skip_all)]
 fn replace_state(siri: anyhow::Result<SiriETResponse>, state: AppState) -> anyhow::Result<()> {
     // PoisonError can _only_ happen when a thread panics while holding an exclusive lock.
     // this fn is the only place that takes this exclusive lock, and only to swap the content of it.
@@ -275,17 +279,21 @@ fn replace_state(siri: anyhow::Result<SiriETResponse>, state: AppState) -> anyho
     // down the whole process.
     let version = *state.next_sync.read().unwrap();
     let new_journeys = Journeys::new(&state.stops.clone(), siri?.journeys());
+    let updated = new_journeys.len();
     // PoisonError again, which we can't handle.
     // We clone to avoid holding a write-lock for any operations other than swapping
     // the state out. This way, we can update `old_journeys`, then just move it into the state as
     // soon as nobody is reading it anymore. Scope to ensure we drop the lock immediately after cloning.
     let mut old_journeys = { state.state.read().unwrap().clone() };
+    let old = old_journeys.len();
     let cutoff = Utc::now()
         .with_timezone(&Oslo)
-        .sub(Duration::hours(4))
+        .sub(Duration::hours(8))
         .fixed_offset();
     old_journeys.expire(cutoff);
+    let expired = old - old_journeys.len();
     old_journeys.merge_from(new_journeys);
+    let resulting = old_journeys.len();
 
     // Scope to drop the lock immediately after swapping
     {
@@ -299,6 +307,7 @@ fn replace_state(siri: anyhow::Result<SiriETResponse>, state: AppState) -> anyho
     {
         *state.next_sync.write().unwrap() += 1
     }
+    info!("had={old} updated={updated} expired={expired} resulting={resulting} journeys.");
     Ok(())
 }
 

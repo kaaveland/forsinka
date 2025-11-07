@@ -2,7 +2,6 @@ use crate::api::{JourneyDelay, TrainJourney};
 use crate::db::StopRow;
 use crate::entur_siriformat::EstimatedVehicleJourney;
 use chrono::{DateTime, FixedOffset, TimeDelta, Utc};
-use duckdb::arrow::datatypes::DataType::Duration;
 use fxhash::{FxHashMap, FxHashSet};
 use ordered_float::OrderedFloat;
 
@@ -89,10 +88,10 @@ impl Journey {
         // This throws out the whole journey if we don't have any actual or planned times for the previous stop
         let prev_stop_planned_time = prev
             .aimed_arrival_time
-            .or_else(|| prev.aimed_departure_time)?;
+            .or(prev.aimed_departure_time)?;
         let prev_stop_actual_time = prev
             .actual_arrival_time
-            .or_else(|| prev.actual_departure_time)?;
+            .or(prev.actual_departure_time)?;
         let prev_stop = stops
             .stops
             .get(&StopPointRef(prev.stop_point_ref.value.clone()))?
@@ -109,8 +108,7 @@ impl Journey {
                         .clone(),
                     first
                         .aimed_arrival_time
-                        .or_else(|| first.aimed_departure_time)?
-                        .clone(),
+                        .or(first.aimed_departure_time)?,
                 ))
             })
             .unzip();
@@ -229,7 +227,11 @@ impl Journeys {
 
     pub fn expire(&mut self, cutoff: DateTime<FixedOffset>) {
         self.journeys
-            .retain(|_, journey| journey.last_update < cutoff);
+            .retain(|_, journey| journey.last_update > cutoff);
+    }
+
+    pub fn len(&self) -> usize {
+        self.journeys.len()
     }
 }
 
