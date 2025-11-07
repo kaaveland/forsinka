@@ -36,6 +36,7 @@ mod api;
 mod db;
 mod entur_data;
 mod entur_siriformat;
+mod membased;
 
 #[derive(Parser)]
 struct SharedOptions {
@@ -120,7 +121,7 @@ async fn initial_import(args: SharedOptions) -> anyhow::Result<(Connection, Conf
     let config = Config::new(me, args.api_url.clone(), client, args.static_data);
 
     let data = entur_data::fetch_data(&config).await?;
-    let vehicle_journeys = entur_data::vehicle_journeys(data, 0);
+    let vehicle_journeys = vehicle_journeys(data, 0);
     info!("Start inserting journeys");
     db::replace_data(&mut db, vehicle_journeys)?;
     info!("Loaded initial data");

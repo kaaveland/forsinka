@@ -1,4 +1,5 @@
 use crate::entur_siriformat::{EstimatedVehicleJourney, SiriETResponse};
+use crate::membased::{Journeys, Stops};
 use chrono::{DateTime, FixedOffset, TimeZone, Utc};
 use duckdb::{Appender, Row};
 use reqwest::Client;
@@ -55,6 +56,22 @@ pub async fn fetch_data(config: &Config) -> anyhow::Result<SiriETResponse> {
     } else {
         fetch_siri(config).await
     }
+}
+
+pub async fn fetch_journeys<'a>(config: &Config, stops: &'a Stops) -> anyhow::Result<Journeys<'a>> {
+    let data = fetch_data(config).await?;
+    Ok(Journeys::new(
+        stops,
+        data.siri
+            .service_delivery
+            .estimated_timetable_delivery
+            .into_iter()
+            .flat_map(|et| {
+                et.estimated_journey_version_frame
+                    .into_iter()
+                    .flat_map(|f| f.estimated_vehicle_journey.into_iter())
+            }),
+    ))
 }
 
 pub fn append_data(
