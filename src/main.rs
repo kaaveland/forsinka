@@ -1,8 +1,9 @@
 use crate::api::JourneyDelay;
 use crate::api::TrainJourney;
 use crate::api::TrainsPage;
-use crate::entur_data::{Config, vehicle_journeys};
-use anyhow::anyhow;
+use crate::entur_data::Config;
+use crate::entur_siriformat::SiriETResponse;
+use crate::membased::{Journeys, Stops};
 use askama::Template;
 use axum::error_handling::HandleErrorLayer;
 use axum::extract::{Path, State};
@@ -10,14 +11,18 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router, http};
+use chrono::{Duration, Utc};
+use chrono_tz::Europe::Oslo;
 use clap::{Parser, Subcommand};
 use duckdb::Connection;
 use http::HeaderValue;
 use http::header::CACHE_CONTROL;
 use reqwest::ClientBuilder;
 use serde::Serialize;
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
-use std::time::Duration;
+use std::cmp::Reverse;
+use std::ops::Sub;
+use std::sync::{Arc, RwLock};
+use std::time;
 use tokio::signal;
 use tokio::sync::watch::{Receiver, Sender};
 use tower::timeout::TimeoutLayer;
@@ -26,7 +31,7 @@ use tower_http::cors;
 use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
-use tracing::{error, info};
+use tracing::{error, info, instrument};
 use tracing_subscriber::fmt;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -36,6 +41,7 @@ mod api;
 mod db;
 mod entur_data;
 mod entur_siriformat;
+mod membased;
 
 #[derive(Parser)]
 struct SharedOptions {
@@ -69,13 +75,6 @@ struct SharedOptions {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create a local DuckDB file with imported data from entur
-    ///
-    /// This is convenient to explore the data
-    Import {
-        #[command(flatten)]
-        shared_options: SharedOptions,
-    },
     /// Start a long-lived http server that continually imports data
     Serve {
         #[command(flatten)]
@@ -100,18 +99,20 @@ struct Forsinka {
     command: Commands,
 }
 
-async fn initial_import(args: SharedOptions) -> anyhow::Result<(Connection, Config)> {
+async fn initial_import(
+    args: SharedOptions,
+) -> anyhow::Result<(Connection, SiriETResponse, Config)> {
     let me = args
         .requestor_id
         .clone()
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
     let client = ClientBuilder::default()
-        .connect_timeout(Duration::from_millis(1_000))
-        .timeout(Duration::from_millis(60_000))
+        .connect_timeout(time::Duration::from_millis(1_000))
+        .timeout(time::Duration::from_millis(60_000))
         .build()?;
 
-    let mut db = db::prepare_db(
+    let db = db::prepare_db(
         &args.db_url,
         &args.parquet_root,
         args.threads,
@@ -120,11 +121,7 @@ async fn initial_import(args: SharedOptions) -> anyhow::Result<(Connection, Conf
     let config = Config::new(me, args.api_url.clone(), client, args.static_data);
 
     let data = entur_data::fetch_data(&config).await?;
-    let vehicle_journeys = entur_data::vehicle_journeys(data, 0);
-    info!("Start inserting journeys");
-    db::replace_data(&mut db, vehicle_journeys)?;
-    info!("Loaded initial data");
-    Ok((db, config))
+    Ok((db, data, config))
 }
 
 async fn root() -> impl IntoResponse {
@@ -161,17 +158,6 @@ async fn shutdown_signal(terminate_jobs: Sender<bool>) {
     }
 }
 
-async fn refetch_data(
-    db: &mut Connection,
-    entur_config: &Config,
-    version: u32,
-) -> anyhow::Result<()> {
-    let data = entur_data::fetch_data(entur_config).await?;
-    let journeys = vehicle_journeys(data, version);
-    db::replace_data(db, journeys)?;
-    Ok(())
-}
-
 struct WebappError {
     inner: anyhow::Error,
 }
@@ -195,21 +181,29 @@ where
     }
 }
 
+#[instrument(name = "by_stop_name", skip_all)]
 async fn by_stop_name(
     State(state): State<AppState>,
     Path(stop_name): Path<String>,
 ) -> Result<Json<Vec<JourneyDelay>>, WebappError> {
-    let c = state.conn()?;
-    let v = api::journey_delays(stop_name.as_str(), &c)?;
-    Ok(Json(v))
+    let journeys = state.state.read().unwrap();
+    let journeys = journeys.by_visits(stop_name.as_str()).into_iter().cloned();
+    Ok(Json(journeys.map(|journey| journey.into()).collect()))
 }
 
+#[instrument(name = "train_journeys", skip_all)]
 async fn train_journeys(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<TrainJourney>>, WebappError> {
-    let c = state.conn()?;
-    let v = api::train_journeys(&c)?;
-    Ok(Json(v))
+    let journeys = state.state.read().unwrap();
+    let mut train_journeys: Vec<TrainJourney> = journeys
+        .train_journeys()
+        .into_iter()
+        .cloned()
+        .map(|tj| tj.into())
+        .collect();
+    train_journeys.sort_by_key(|tj| Reverse((tj.possibly_stuck, tj.delay_seconds)));
+    Ok(Json(train_journeys))
 }
 
 const TEMPLATE_ERROR_HTML: &str = r#"<!DOCTYPE html>
@@ -249,33 +243,85 @@ impl IntoResponse for TrainsPage {
     }
 }
 
+#[instrument(name = "train_journeys_html", skip_all)]
 async fn train_journeys_html(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, WebappError> {
-    let c = state.conn()?;
-    let trains = api::train_journeys(&c)?;
-    Ok(TrainsPage::new(trains, state.assets_path.clone()))
+    let journeys = state.state.read().unwrap();
+    let mut train_journeys: Vec<TrainJourney> = journeys
+        .train_journeys()
+        .into_iter()
+        .cloned()
+        .map(|tj| tj.into())
+        .collect();
+    train_journeys.sort_by_key(|tj| Reverse((tj.possibly_stuck, tj.delay_seconds)));
+    Ok(TrainsPage::new(train_journeys, state.assets_path.clone()))
 }
 
 async fn stop_names(State(state): State<AppState>) -> Result<Json<Vec<String>>, WebappError> {
-    let c = state.conn()?;
-    let stops: Result<Vec<String>, _> = c.
-        prepare("from stopdata join estimated_call using (stop_point_ref) select distinct name where name is not null")?.
-        query_map([], |row| row.get(0))?.collect();
-    Ok(Json(stops?))
+    Ok(Json(state.stops.stop_names().collect()))
+}
+
+#[derive(Clone)]
+struct AppState {
+    state: Arc<RwLock<Journeys>>,
+    stops: Arc<Stops>,
+    last_successful_sync: Arc<RwLock<u32>>,
+    next_sync: Arc<RwLock<u32>>,
+    assets_path: String,
+}
+
+#[instrument(name = "replace_state", skip_all)]
+fn replace_state(siri: anyhow::Result<SiriETResponse>, state: AppState) -> anyhow::Result<()> {
+    // PoisonError can _only_ happen when a thread panics while holding an exclusive lock.
+    // this fn is the only place that takes this exclusive lock, and only to swap the content of it.
+    // If that happens, I don't have a better idea than panicing anyway, other than maybe try to shut
+    // down the whole process.
+    let version = *state.next_sync.read().unwrap();
+    let new_journeys = Journeys::new(&state.stops.clone(), siri?.journeys());
+    let updated = new_journeys.len();
+    // PoisonError again, which we can't handle.
+    // We clone to avoid holding a write-lock for any operations other than swapping
+    // the state out. This way, we can update `old_journeys`, then just move it into the state as
+    // soon as nobody is reading it anymore. Scope to ensure we drop the lock immediately after cloning.
+    let mut old_journeys = { state.state.read().unwrap().clone() };
+    let old = old_journeys.len();
+    let cutoff = Utc::now()
+        .with_timezone(&Oslo)
+        .sub(Duration::hours(8))
+        .fixed_offset();
+    old_journeys.expire(cutoff);
+    let expired = old - old_journeys.len();
+    old_journeys.merge_from(new_journeys);
+    let resulting = old_journeys.len();
+
+    // Scope to drop the lock immediately after swapping
+    {
+        // PoisonError. Immediately get rid of this lock.
+        *state.state.write().unwrap() = old_journeys;
+    }
+    // We synced successfully, let's tell the health check
+    {
+        *state.last_successful_sync.write().unwrap() = version
+    }
+    {
+        *state.next_sync.write().unwrap() += 1
+    }
+    info!("had={old} updated={updated} expired={expired} resulting={resulting} journeys.");
+    Ok(())
 }
 
 fn set_up_fetch_job(
     fetch_interval_seconds: Option<u16>,
     recv_shutdown: Receiver<bool>,
-    mut db: Connection,
     entur_config: Config,
     state: AppState,
 ) -> Option<tokio::task::JoinHandle<()>> {
     if let Some(interval_seconds) = fetch_interval_seconds {
         let mut recv_shutdown = recv_shutdown.clone();
         Some(tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(interval_seconds as u64));
+            let mut interval =
+                tokio::time::interval(time::Duration::from_secs(interval_seconds as u64));
 
             let mut first = true;
 
@@ -286,14 +332,15 @@ fn set_up_fetch_job(
                             first = false;
                             continue;
                         }
-                        let version = *state.next_sync.read().unwrap();
-                        if let Err(reason) = refetch_data(&mut db, &entur_config, version).await {
-                            error!("Unable to refetch: {reason:?}");
-                        } else if let Ok(mut sync_version) = state.last_successful_sync.write() {
-                                *sync_version = version;
-                        }
-                        if let Ok(mut sync_version) = state.next_sync.write() {
-                            *sync_version += 1;
+                        let r = replace_state(
+                            entur_data::fetch_data(&entur_config).await,
+                            state.clone()
+                        );
+
+                        if let Err(reason) = r {
+                            error!("Unable to replace state: {reason:?}");
+                        } else {
+                            info!("Replaced state successfully");
                         }
                     }
                     _ = recv_shutdown.changed() => {
@@ -308,14 +355,6 @@ fn set_up_fetch_job(
     } else {
         None
     }
-}
-
-#[derive(Clone)]
-struct AppState {
-    db: Arc<Mutex<Connection>>,
-    last_successful_sync: Arc<RwLock<u32>>,
-    next_sync: Arc<RwLock<u32>>,
-    assets_path: String,
 }
 
 #[derive(Serialize)]
@@ -349,14 +388,6 @@ async fn healthy(State(app_state): State<AppState>) -> Healthy {
     }
 }
 
-impl AppState {
-    fn conn(&self) -> Result<MutexGuard<'_, Connection>, anyhow::Error> {
-        self.db
-            .lock()
-            .map_err(|err| anyhow!("Failed to get db: {err}"))
-    }
-}
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
@@ -369,75 +400,67 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Forsinka::try_parse()?;
+    let Commands::Serve {
+        shared_options,
+        port,
+        fetch_interval_seconds,
+        assets_path,
+    } = args.command;
 
-    match args.command {
-        Commands::Import { shared_options } => {
-            initial_import(shared_options).await?;
-            Ok(())
-        }
-        Commands::Serve {
-            shared_options,
-            port,
-            fetch_interval_seconds,
-            assets_path,
-        } => {
-            let (db, entur_config) = initial_import(shared_options).await?;
-            let state = AppState {
-                db: Arc::new(Mutex::new(db.try_clone()?)),
-                last_successful_sync: Arc::new(RwLock::new(0)),
-                next_sync: Arc::new(RwLock::new(0)),
-                assets_path,
-            };
+    let (db, data, entur_config) = initial_import(shared_options).await?;
+    let stops = db::read_stops(&db)?;
+    let stops = Stops::new(stops);
+    let journeys = Journeys::new(&stops, data.journeys());
 
-            let app = Router::new()
-                .route("/", get(root))
-                .route("/healthy", get(healthy))
-                .route("/stop/{stop_name}", get(by_stop_name))
-                .route("/stops", get(stop_names))
-                .route("/trains", get(train_journeys))
-                .route("/trains.html", get(train_journeys_html))
-                .nest_service("/static", ServeDir::new("static"))
+    let state = AppState {
+        state: Arc::new(RwLock::new(journeys)),
+        last_successful_sync: Arc::new(RwLock::new(0)),
+        next_sync: Arc::new(RwLock::new(0)),
+        stops: Arc::new(stops),
+        assets_path,
+    };
+
+    let app = Router::new()
+        .route("/", get(root))
+        .route("/healthy", get(healthy))
+        .route("/stop/{stop_name}", get(by_stop_name))
+        .route("/stops", get(stop_names))
+        .route("/trains", get(train_journeys))
+        .route("/trains.html", get(train_journeys_html))
+        .nest_service("/static", ServeDir::new("static"))
+        .layer(
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(|_: BoxError| async {
+                    error!("Timed out");
+                    (StatusCode::REQUEST_TIMEOUT, "Timed out. Sorry!".to_string())
+                }))
+                .layer(TimeoutLayer::new(time::Duration::from_millis(500)))
                 .layer(
-                    ServiceBuilder::new()
-                        .layer(HandleErrorLayer::new(|_: BoxError| async {
-                            error!("Timed out");
-                            (StatusCode::REQUEST_TIMEOUT, "Timed out. Sorry!".to_string())
-                        }))
-                        .layer(TimeoutLayer::new(Duration::from_millis(500)))
-                        .layer(
-                            CorsLayer::new()
-                                .allow_methods([http::Method::GET])
-                                .allow_origin(cors::Any),
-                        ),
-                )
-                .layer(SetResponseHeaderLayer::if_not_present(
-                    CACHE_CONTROL,
-                    HeaderValue::from_static("public, s-maxage=10, max-age=30"),
-                ))
-                .with_state(state.clone());
+                    CorsLayer::new()
+                        .allow_methods([http::Method::GET])
+                        .allow_origin(cors::Any),
+                ),
+        )
+        .layer(SetResponseHeaderLayer::if_not_present(
+            CACHE_CONTROL,
+            HeaderValue::from_static("public, s-maxage=10, max-age=30"),
+        ))
+        .with_state(state.clone());
 
-            let addr = format!("0.0.0.0:{}", port);
+    let addr = format!("0.0.0.0:{}", port);
 
-            let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
-            let (send_shutdown, recv_shutdown) = tokio::sync::watch::channel(false);
-            let maybe_task = set_up_fetch_job(
-                fetch_interval_seconds,
-                recv_shutdown,
-                db,
-                entur_config,
-                state,
-            );
+    let listener = tokio::net::TcpListener::bind(addr.as_str()).await?;
+    let (send_shutdown, recv_shutdown) = tokio::sync::watch::channel(false);
+    let maybe_task = set_up_fetch_job(fetch_interval_seconds, recv_shutdown, entur_config, state);
 
-            axum::serve(listener, app)
-                .with_graceful_shutdown(shutdown_signal(send_shutdown))
-                .await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(send_shutdown))
+        .await?;
 
-            if let Some(task) = maybe_task {
-                task.await?;
-            }
-
-            info!("Terminating");
-            Ok(())
-        }
+    if let Some(task) = maybe_task {
+        task.await?;
     }
+
+    info!("Terminating");
+    Ok(())
 }
