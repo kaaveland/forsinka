@@ -250,14 +250,6 @@ impl Journeys {
         let journeys = journeys
             .into_iter()
             .filter_map(|journey_row| {
-                let s = serde_json::to_string(&journey_row).unwrap();
-                let is_train = ["BNR", "VYG", "GOA", "FLT", "FLY", "SJN"]
-                    .contains(&journey_row.data_source.as_str())
-                    && journey_row
-                        .recorded_calls
-                        .as_ref()
-                        .map(|rc| !rc.recorded_call.is_empty())
-                        .unwrap_or(false);
                 let id = journey_row
                     .dated_vehicle_journey_ref
                     .as_ref()
@@ -271,9 +263,6 @@ impl Journeys {
                     .or_else(|| journey_row.block_ref.as_ref().map(|r| r.value.as_str()))
                     .map(|id| id.to_string())?;
                 let mapped = Journey::new(stops, JourneyId(id.clone()), journey_row);
-                if mapped.is_none() && is_train {
-                    info!("Unable to map {s}");
-                }
                 Some((JourneyId(id.clone()), mapped?))
             })
             .collect();
