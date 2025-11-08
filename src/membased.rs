@@ -146,17 +146,19 @@ impl Journey {
             .unwrap_or_default();
         let finished = estimated.is_empty();
         let data_source = journey.data_source;
-        let first_recorded = recorded.iter().min_by_key(|call| call.order)?;
+        let first_recorded = recorded.first()?;
 
-        let prev = recorded.iter().max_by_key(|call| call.order)?;
+        let prev = recorded.last()?;
         // This throws out the whole journey if we don't have any actual or planned times for the previous stop
         let prev_stop_planned_time = prev.aimed_arrival_time.or(prev.aimed_departure_time)?;
-        let prev_stop_actual_time = prev.actual_arrival_time.or(prev.actual_departure_time)?;
+        let prev_stop_actual_time = prev.actual_arrival_time
+            .or(prev.actual_departure_time)
+            .or(prev.expected_arrival_time)
+            .or(prev.expected_departure_time)?;
         let prev_stop: Stop = stop_with_fallback(stops, prev)?;
 
         let (next_stop, next_stop_planned_time) = estimated
-            .iter()
-            .min_by_key(|stop| stop.order)
+            .first()
             .and_then(|first_estimated| {
                 Some((
                     stop_with_fallback(stops, first_estimated)?,
@@ -170,13 +172,11 @@ impl Journey {
         let origin = stop_with_fallback(stops, first_recorded)?;
 
         let destination = estimated
-            .iter()
-            .max_by_key(|call| call.order)
+            .last()
             .and_then(|ec| stop_with_fallback(stops, ec))
             .or_else(|| {
                 recorded
-                    .iter()
-                    .max_by_key(|call| call.order)
+                    .last()
                     .and_then(|dest| stop_with_fallback(stops, dest))
             })?;
 
