@@ -5,7 +5,7 @@
 #![allow(dead_code)]
 
 use chrono::{DateTime, FixedOffset, NaiveDate};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "PascalCase")]
@@ -59,7 +59,7 @@ pub struct EstimatedJourneyVersionFrame {
 }
 
 /// A journey, identified by a selection of some fields. Future stops are in `estimated_calls` and past stops are in `recorded_calls`.
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct EstimatedVehicleJourney {
     /// An identifier of this journey, one possibility among `framed_vehicle_journey_ref` and `dated_vehicle_journey_ref`
@@ -106,42 +106,42 @@ pub struct EstimatedVehicleJourney {
     pub via: Option<Vec<Via>>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct Via {
     pub place_name: Vec<StringValue>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 pub struct LocalizedString {
     pub lang: Option<String>,
     pub value: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 pub struct OptionalStringValue {
     pub value: Option<String>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct FramedVehicleJourneyRef {
     pub data_frame_ref: DataFrameRef,
     pub dated_vehicle_journey_ref: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 pub struct DataFrameRef {
     pub value: NaiveDate,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct RecordedCalls {
     pub recorded_call: Vec<RecordedCall>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct RecordedCall {
     pub actual_arrival_time: Option<DateTime<FixedOffset>>,
@@ -162,13 +162,13 @@ pub struct RecordedCall {
     pub via: Option<Vec<Via>>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct EstimatedCalls {
     pub estimated_call: Vec<EstimatedCall>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct EstimatedCall {
     pub aimed_arrival_time: Option<DateTime<FixedOffset>>,
@@ -195,13 +195,13 @@ pub struct EstimatedCall {
     pub visit_number: Option<u16>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct PredictionQuality {
     pub prediction_level: String,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct StopAssignment {
     pub actual_quay_ref: Option<StringValue>,
@@ -209,7 +209,7 @@ pub struct StopAssignment {
     pub expected_quay_ref: StringValue,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Serialize)]
 pub struct StringValue {
     pub value: String,
 }

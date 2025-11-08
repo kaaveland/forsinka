@@ -1,9 +1,10 @@
 use crate::api::{JourneyDelay, TrainJourney};
 use crate::db::StopRow;
-use crate::entur_siriformat::EstimatedVehicleJourney;
+use crate::entur_siriformat::{EstimatedCall, EstimatedVehicleJourney, RecordedCall};
 use chrono::{DateTime, FixedOffset, TimeDelta, Utc};
 use fxhash::{FxHashMap, FxHashSet};
 use ordered_float::OrderedFloat;
+use tracing::info;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct JourneyId(String);
@@ -71,6 +72,69 @@ pub struct Journey {
     to_visit: FxHashSet<String>,
 }
 
+impl TryFrom<&EstimatedCall> for Stop {
+    type Error = ();
+
+    fn try_from(value: &EstimatedCall) -> Result<Self, Self::Error> {
+        let v = value
+            .stop_point_name
+            .as_ref()
+            .and_then(|seg| seg.first())
+            .map(|name| Stop {
+                name: name.value.clone(),
+                lat: None,
+                lon: None,
+            });
+        if let Some(stop) = v {
+            Ok(stop)
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl TryFrom<&RecordedCall> for Stop {
+    type Error = ();
+
+    fn try_from(value: &RecordedCall) -> Result<Self, Self::Error> {
+        let v = value
+            .stop_point_name
+            .as_ref()
+            .and_then(|seg| seg.first())
+            .map(|name| Stop {
+                name: name.value.clone(),
+                lat: None,
+                lon: None,
+            });
+        if let Some(stop) = v {
+            Ok(stop)
+        } else {
+            Err(())
+        }
+    }
+}
+
+impl From<&RecordedCall> for StopPointRef {
+    fn from(value: &RecordedCall) -> Self {
+        StopPointRef(value.stop_point_ref.value.clone())
+    }
+}
+
+impl From<&EstimatedCall> for StopPointRef {
+    fn from(value: &EstimatedCall) -> Self {
+        StopPointRef(value.stop_point_ref.value.clone())
+    }
+}
+
+fn stop_with_fallback<C: TryInto<Stop> + Into<StopPointRef> + Copy>(
+    stops: &Stops,
+    call: C,
+) -> Option<Stop> {
+    let id: StopPointRef = call.into();
+    let primary = stops.get(&id).cloned();
+    primary.or_else(|| call.try_into().ok())
+}
+
 impl Journey {
     fn new(stops: &Stops, journey_id: JourneyId, journey: EstimatedVehicleJourney) -> Option<Self> {
         let last_update = journey.recorded_at_time;
@@ -82,57 +146,44 @@ impl Journey {
             .unwrap_or_default();
         let finished = estimated.is_empty();
         let data_source = journey.data_source;
-        let first = recorded.iter().min_by_key(|call| call.order)?;
-        let origin_id = StopPointRef(first.stop_point_ref.value.clone());
+        let first_recorded = recorded.iter().min_by_key(|call| call.order)?;
+
         let prev = recorded.iter().max_by_key(|call| call.order)?;
         // This throws out the whole journey if we don't have any actual or planned times for the previous stop
-        let prev_stop_planned_time = prev
-            .aimed_arrival_time
-            .or(prev.aimed_departure_time)?;
-        let prev_stop_actual_time = prev
-            .actual_arrival_time
-            .or(prev.actual_departure_time)?;
-        let prev_stop = stops
-            .stops
-            .get(&StopPointRef(prev.stop_point_ref.value.clone()))?
-            .clone();
+        let prev_stop_planned_time = prev.aimed_arrival_time.or(prev.aimed_departure_time)?;
+        let prev_stop_actual_time = prev.actual_arrival_time.or(prev.actual_departure_time)?;
+        let prev_stop: Stop = stop_with_fallback(stops, prev)?;
 
         let (next_stop, next_stop_planned_time) = estimated
             .iter()
             .min_by_key(|stop| stop.order)
-            .and_then(|first| {
+            .and_then(|first_estimated| {
                 Some((
-                    stops
-                        .stops
-                        .get(&StopPointRef(first.stop_point_ref.value.clone()))?
-                        .clone(),
-                    first
+                    stop_with_fallback(stops, first_estimated)?,
+                    first_estimated
                         .aimed_arrival_time
-                        .or(first.aimed_departure_time)?,
+                        .or(first_estimated.aimed_departure_time)?,
                 ))
             })
             .unzip();
 
-        // This block throws out journeys to stops we don't know about
-        let origin = stops.get(&origin_id)?.clone();
-        let last = estimated
-            .last()
-            .map(|ec| &ec.stop_point_ref.value)
+        let origin = stop_with_fallback(stops, first_recorded)?;
+
+        let destination = estimated
+            .iter()
+            .max_by_key(|call| call.order)
+            .and_then(|ec| stop_with_fallback(stops, ec))
             .or_else(|| {
                 recorded
                     .iter()
-                    .last()
-                    .map(|dest| &dest.stop_point_ref.value)
+                    .max_by_key(|call| call.order)
+                    .and_then(|dest| stop_with_fallback(stops, dest))
             })?;
-        let destination_id = StopPointRef(last.clone());
-        let destination = stops.get(&destination_id)?.clone();
+
         // This throws out only stops we can't find, not the actual journey
         let to_visit: FxHashSet<_> = estimated
             .into_iter()
-            .filter(|ec| !ec.cancellation.unwrap_or(false))
-            .map(|ec| StopPointRef(ec.stop_point_ref.value))
-            .filter_map(|id| stops.get(&id))
-            .map(|stop| stop.name.to_string())
+            .filter_map(|est| stop_with_fallback(stops, &est).map(|stop| stop.name))
             .collect();
         let line_ref = journey.line_ref.value;
 
@@ -198,6 +249,14 @@ impl Journeys {
         let journeys = journeys
             .into_iter()
             .filter_map(|journey_row| {
+                let s = serde_json::to_string(&journey_row).unwrap();
+                let is_train = ["BNR", "VYG", "GOA", "FLT", "FLY", "SJN"]
+                    .contains(&journey_row.data_source.as_str())
+                    && journey_row
+                        .recorded_calls
+                        .as_ref()
+                        .map(|rc| !rc.recorded_call.is_empty())
+                        .unwrap_or(false);
                 let id = journey_row
                     .dated_vehicle_journey_ref
                     .as_ref()
@@ -210,10 +269,11 @@ impl Journeys {
                     })
                     .or_else(|| journey_row.block_ref.as_ref().map(|r| r.value.as_str()))
                     .map(|id| id.to_string())?;
-                Some((
-                    JourneyId(id.clone()),
-                    Journey::new(stops, JourneyId(id), journey_row)?,
-                ))
+                let mapped = Journey::new(stops, JourneyId(id.clone()), journey_row);
+                if mapped.is_none() && is_train {
+                    info!("Unable to map {s}");
+                }
+                Some((JourneyId(id.clone()), mapped?))
             })
             .collect();
         Self { journeys }
@@ -258,7 +318,12 @@ impl From<Journey> for TrainJourney {
         let possibly_stuck = value.possibly_stuck();
         Self {
             vehicle_journey_id: value.journey_id.0,
-            line_ref: value.line_ref,
+            line_ref: format!(
+                "{}: {} to {}",
+                value.line_ref.split(':').next_back().unwrap(),
+                value.origin.name.trim_end_matches(" stasjon"),
+                value.destination.name.trim_end_matches(" stasjon")
+            ),
             cancellation: value.cancelled,
             data_source: value.data_source,
             stop_name: value.prev_stop.name,

@@ -12,11 +12,3 @@ curl https://kaaveland-bus-eta-data.hel1.your-objectstorage.com/stops.parquet -o
 [tasks.dev-static]
 description = "Start forsinka on example-data"
 run = "if ! [ -r data/example.json ]; then mise run fetch-example; fi; cargo run --release serve -s data/example.json --parquet-root data/"
-
-[tasks.make-db-from-json]
-description = "Make a duckdb"
-run = "if ! [ -r data/example.json ]; then mise run fetch-example; fi; cargo run --release import -s data/example.json -d data/example.db --parquet-root data/"
-
-[tasks.duckdb]
-description = "Check the data in DuckDB ui"
-run = "if ! [ -r data/example.db ];  then mise run make-db-from-json; fi; duckdb --ui data/example.db"

@@ -62,7 +62,7 @@ struct SharedOptions {
     #[arg(short = 'd', long = "db-url")]
     db_url: Option<String>,
     /// requestorId to send to entur api, to fetch only diff since last fetch
-    /// The default behaviour is to generate a unique one startup to receive the full dataset the first run
+    /// The default behaviour is to generate a unique on startup to receive the full dataset the first run
     #[arg(long = "requestor-id")]
     requestor_id: Option<String>,
     /// Number of threads to configure DuckDB with
@@ -181,7 +181,7 @@ where
     }
 }
 
-#[instrument(name = "by_stop_name", skip_all)]
+#[instrument(name = "by_stop_name", skip(state))]
 async fn by_stop_name(
     State(state): State<AppState>,
     Path(stop_name): Path<String>,
@@ -278,7 +278,7 @@ fn replace_state(siri: anyhow::Result<SiriETResponse>, state: AppState) -> anyho
     // If that happens, I don't have a better idea than panicing anyway, other than maybe try to shut
     // down the whole process.
     let version = *state.next_sync.read().unwrap();
-    let new_journeys = Journeys::new(&state.stops.clone(), siri?.journeys());
+    let new_journeys = Journeys::new(&state.stops, siri?.journeys());
     let updated = new_journeys.len();
     // PoisonError again, which we can't handle.
     // We clone to avoid holding a write-lock for any operations other than swapping
@@ -288,7 +288,7 @@ fn replace_state(siri: anyhow::Result<SiriETResponse>, state: AppState) -> anyho
     let old = old_journeys.len();
     let cutoff = Utc::now()
         .with_timezone(&Oslo)
-        .sub(Duration::hours(8))
+        .sub(Duration::hours(1))
         .fixed_offset();
     old_journeys.expire(cutoff);
     let expired = old - old_journeys.len();
