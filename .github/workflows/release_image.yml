@@ -79,7 +79,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: "release-${{ matrix.target.toolchain }}"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
       - name: Install cross
         if: ${{ matrix.target.cargo == 'cross' }}
         run: cargo binstall -y --force cross
