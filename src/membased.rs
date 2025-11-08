@@ -151,7 +151,8 @@ impl Journey {
         let prev = recorded.last()?;
         // This throws out the whole journey if we don't have any actual or planned times for the previous stop
         let prev_stop_planned_time = prev.aimed_arrival_time.or(prev.aimed_departure_time)?;
-        let prev_stop_actual_time = prev.actual_arrival_time
+        let prev_stop_actual_time = prev
+            .actual_arrival_time
             .or(prev.actual_departure_time)
             .or(prev.expected_arrival_time)
             .or(prev.expected_departure_time)?;
