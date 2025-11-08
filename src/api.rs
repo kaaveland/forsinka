@@ -1,4 +1,7 @@
 use askama::Template;
+use axum::Json;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, FixedOffset, Utc};
 use chrono_tz::Europe::Oslo;
 use serde::Serialize;
@@ -54,6 +57,23 @@ impl TrainsPage {
             delayed_count,
             stuck_count,
             assets_path,
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct Healthy {
+    pub last_successful_sync: Option<u32>,
+    pub next_sync_attempt: Option<u32>,
+    pub healthy: bool,
+}
+
+impl IntoResponse for Healthy {
+    fn into_response(self) -> Response {
+        if self.healthy {
+            (StatusCode::OK, Json(self)).into_response()
+        } else {
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(self)).into_response()
         }
     }
 }
