@@ -4,7 +4,6 @@ use crate::entur_siriformat::{EstimatedCall, EstimatedVehicleJourney, RecordedCa
 use chrono::{DateTime, FixedOffset, TimeDelta, Utc};
 use fxhash::{FxHashMap, FxHashSet};
 use ordered_float::OrderedFloat;
-use tracing::info;
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub struct JourneyId(String);
@@ -114,23 +113,35 @@ impl TryFrom<&RecordedCall> for Stop {
     }
 }
 
-impl From<&RecordedCall> for StopPointRef {
-    fn from(value: &RecordedCall) -> Self {
-        StopPointRef(value.stop_point_ref.value.clone())
+impl TryFrom<&RecordedCall> for StopPointRef {
+    type Error = ();
+
+    fn try_from(value: &RecordedCall) -> Result<Self, Self::Error> {
+        if let Some(stop_point_ref) = &value.stop_point_ref {
+            Ok(StopPointRef(stop_point_ref.value.clone()))
+        } else {
+            Err(())
+        }
     }
 }
 
-impl From<&EstimatedCall> for StopPointRef {
-    fn from(value: &EstimatedCall) -> Self {
-        StopPointRef(value.stop_point_ref.value.clone())
+impl TryFrom<&EstimatedCall> for StopPointRef {
+    type Error = ();
+
+    fn try_from(value: &EstimatedCall) -> Result<Self, Self::Error> {
+        if let Some(stop_point_ref) = &value.stop_point_ref {
+            Ok(StopPointRef(stop_point_ref.value.clone()))
+        } else {
+            Err(())
+        }
     }
 }
 
-fn stop_with_fallback<C: TryInto<Stop> + Into<StopPointRef> + Copy>(
+fn stop_with_fallback<C: TryInto<Stop> + TryInto<StopPointRef> + Copy>(
     stops: &Stops,
     call: C,
 ) -> Option<Stop> {
-    let id: StopPointRef = call.into();
+    let id: StopPointRef = call.try_into().ok()?;
     let primary = stops.get(&id).cloned();
     primary.or_else(|| call.try_into().ok())
 }

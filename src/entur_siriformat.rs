@@ -157,7 +157,7 @@ pub struct RecordedCall {
     pub order: u16,
     pub prediction_inaccurate: Option<bool>,
     pub stop_point_name: Option<Vec<StringValue>>,
-    pub stop_point_ref: StringValue,
+    pub stop_point_ref: Option<StringValue>,
     pub visit_number: Option<u16>,
     pub via: Option<Vec<Via>>,
 }
@@ -190,7 +190,7 @@ pub struct EstimatedCall {
     pub prediction_inaccurate: Option<bool>,
     pub request_stop: Option<bool>,
     pub stop_point_name: Option<Vec<StringValue>>,
-    pub stop_point_ref: StringValue,
+    pub stop_point_ref: Option<StringValue>,
     pub timing_point: Option<bool>,
     pub visit_number: Option<u16>,
 }

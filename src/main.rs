@@ -5,9 +5,9 @@ use crate::server::state::{self, AppState};
 use clap::Parser;
 use std::sync::{Arc, RwLock};
 use tracing::info;
-use tracing_subscriber::fmt;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::{filter::EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{fmt, registry};
 
 mod api;
 mod cli;
@@ -21,7 +21,7 @@ mod server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
+    registry()
         .with(
             fmt::layer()
                 .with_writer(std::io::stderr)
@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
         assets_path,
     } = args.command;
 
-    let (db, data, entur_config) = state::initial_import(
+    let (conn, data, entur_config) = state::initial_import(
         shared_options.requestor_id,
         shared_options.api_url,
         shared_options.static_data,
@@ -48,7 +48,8 @@ async fn main() -> anyhow::Result<()> {
         shared_options.memory_gb,
     )
     .await?;
-    let stops = db::read_stops(&db)?;
+
+    let stops = db::read_stops(&conn)?;
     let stops = Stops::new(stops);
     let journeys = Journeys::new(&stops, data.journeys());
 
